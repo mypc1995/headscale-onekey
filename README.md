@@ -108,7 +108,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 | --- | --- | --- |
 | 对外访问地址 | `server_url` | 必填；只允许 `http://` / `https://`；不能带路径、参数、锚点或结尾 `/`；协议必须与证书方式匹配 |
 | 设备域名后缀 | `dns.base_domain` | 必填；至少两级标签；不能是纯 IP；不能与 `server_url` 域名相同 |
-| 启用设备名互访 | `dns.magic_dns` | 开关 |
+| 启用设备名互访（MagicDNS） | `dns.magic_dns` | 开关；勾选后设备可直接用设备名互访 |
 
 **端口与网段**
 
@@ -117,8 +117,8 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 | 客户端连接端口 | `listen_addr` | 必填；`IP:端口`，端口 1–65535 |
 | 本机管理端口 | `grpc_listen_addr` | 必填；格式同上 |
 | 监控数据端口 | `metrics_listen_addr` | 可留空；格式同上 |
-| 分配给设备的 IPv4 网段 | `prefixes.v4` | 必填；CIDR 且必须位于 `100.64.0.0/10` 内 |
-| 分配给设备的 IPv6 网段 | `prefixes.v6` | 可留空；CIDR，掩码不能大于 /64 |
+| 设备 IPv4 网段 | `prefixes.v4` | 必填；CIDR 且必须位于 `100.64.0.0/10` 内 |
+| 设备 IPv6 网段 | `prefixes.v6` | 可留空；CIDR，掩码不能大于 /64 |
 
 同一表单内端口重复会被直接拦截。`server_url` 端口与监听端口不一致时给出警告，避免改端口时两边互相锁死。
 

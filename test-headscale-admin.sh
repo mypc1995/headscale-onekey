@@ -98,7 +98,7 @@ BASE="http://127.0.0.1:${PORT}"
 JAR="$TMPDIR/cookies"
 info "验证登录与访问控制"
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")" == "303" ]] && ok "未登录访问被重定向" || fail "未登录访问未重定向"
-curl -s -X POST "$BASE/login" -d 'username=admin&password=wrong' | grep -q '用户名或密码错误' && ok "错误密码被拒绝" || fail "错误密码未被拒绝"
+curl -s -X POST "$BASE/login" -d 'username=admin&password=wrong' | grep -c '用户名或密码错误' >/dev/null && ok "错误密码被拒绝" || fail "错误密码未被拒绝"
 [[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "正确凭据登录成功" || fail "登录失败"
 
 info "验证中文页面与新 UI"
@@ -110,10 +110,10 @@ for p in / /nodes /users /keys /network /settings /ops /admins; do
     fail "页面 $p 返回 ${code} 或缺少标题"
   fi
 done
-curl -s -b "$JAR" "$BASE/ops" | grep -q 'section.netmon\|实时网速' && ok "运维页包含实时网速面板" || fail "运维页缺少网速面板"
-curl -s -b "$JAR" "$BASE/ops" | grep -q 'spark-down' && ok "网速曲线元素存在" || fail "网速曲线缺失"
-curl -s -b "$JAR" "$BASE/api/netmon" | grep -q '"ifaces"' && ok "网速数据接口可用" || fail "网速数据接口异常"
-curl -s -b "$JAR" "$BASE/" | grep -q 'id="theme-dropdown"' && ok "主题切换控件存在" || fail "主题切换控件缺失"
+curl -s -b "$JAR" "$BASE/ops" | grep -c 'section.netmon\|实时网速' >/dev/null && ok "运维页包含实时网速面板" || fail "运维页缺少网速面板"
+curl -s -b "$JAR" "$BASE/ops" | grep -c 'spark-down' >/dev/null && ok "网速曲线元素存在" || fail "网速曲线缺失"
+curl -s -b "$JAR" "$BASE/api/netmon" | grep -c '"ifaces"' >/dev/null && ok "网速数据接口可用" || fail "网速数据接口异常"
+curl -s -b "$JAR" "$BASE/" | grep -c 'id="theme-dropdown"' >/dev/null && ok "主题切换控件存在" || fail "主题切换控件缺失"
 
 info "验证 Headscale 配置页"
 curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings.html"
@@ -121,6 +121,9 @@ for kw in '域名与访问地址' '端口与网段' 'HTTPS 证书' '证书自动
   grep -q "$kw" "$TMPDIR/settings.html" && ok "配置页包含「$kw」" || fail "配置页缺少「$kw」"
 done
 grep -q 'class="key">listen_addr<' "$TMPDIR/settings.html" && ok "字段旁标注原始配置键" || fail "缺少原始配置键标注"
+grep -q 'class="form-grid cols-3"' "$TMPDIR/settings.html" && ok "三个端口按三列排布" || fail "端口字段未使用三列布局"
+grep -q 'class="check-line"' "$TMPDIR/settings.html" && ok "MagicDNS 为带说明的开关行" || fail "MagicDNS 未使用开关行"
+grep -q '设备 IPv4 网段' "$TMPDIR/settings.html" && ok "网段字段使用通俗名称" || fail "网段字段名称未更新"
 grep -q 'name="tls_cert_pem"' "$TMPDIR/settings.html" && ok "手动证书为粘贴文本框" || fail "手动证书不是文本框"
 grep -q 'name="tls_cert_path"' "$TMPDIR/settings.html" && fail "手动证书仍在填写路径" || ok "手动证书不再要求填写路径"
 grep -q 'value="http://127.0.0.1:8080"' "$TMPDIR/settings.html" && ok "配置页回显 server_url" || fail "配置页未回显 server_url"
@@ -163,13 +166,13 @@ else
 fi
 
 info "验证中英文切换"
-curl -s -b "$JAR" -c "$JAR" "$BASE/lang?lang=en&next=/" -o /dev/null -w ''
-curl -s -b "$JAR" "$BASE/" | grep -q 'Dashboard' && ok "英文界面标题生效" || fail "英文界面未生效"
-curl -s -b "$JAR" "$BASE/ops" | grep -q 'Live network speed' && ok "英文网速文案生效" || fail "英文网速文案缺失"
-curl -s -b "$JAR" "$BASE/users" | grep -q 'New user' && ok "英文表单文案生效" || fail "英文表单文案缺失"
-curl -s -b "$JAR" "$BASE/settings" | grep -q 'Certificate auto-renewal' && ok "英文配置页生效" || fail "英文配置页缺失"
-curl -s -b "$JAR" -c "$JAR" "$BASE/lang?lang=zh&next=/" -o /dev/null
-curl -s -b "$JAR" "$BASE/" | grep -q '总览' && ok "切回中文生效" || fail "切回中文失败"
+curl -sL -b "$JAR" -c "$JAR" "$BASE/lang?lang=en&next=/" -o /dev/null
+curl -s -b "$JAR" "$BASE/" | grep -c 'Dashboard' >/dev/null && ok "英文界面标题生效" || fail "英文界面未生效"
+curl -s -b "$JAR" "$BASE/ops" | grep -c 'Live network speed' >/dev/null && ok "英文网速文案生效" || fail "英文网速文案缺失"
+curl -s -b "$JAR" "$BASE/users" | grep -c 'New user' >/dev/null && ok "英文表单文案生效" || fail "英文表单文案缺失"
+curl -s -b "$JAR" "$BASE/settings" | grep -c 'Certificate auto-renewal' >/dev/null && ok "英文配置页生效" || fail "英文配置页缺失"
+curl -sL -b "$JAR" -c "$JAR" "$BASE/lang?lang=zh&next=/" -o /dev/null
+curl -s -b "$JAR" "$BASE/" | grep -c '总览' >/dev/null && ok "切回中文生效" || fail "切回中文失败"
 
 info "验证 CSRF"
 curl -s -b "$JAR" "$BASE/users" -o "$TMPDIR/users.html"

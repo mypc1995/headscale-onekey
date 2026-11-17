@@ -304,6 +304,8 @@ svg { flex: none; }
   box-shadow: var(--shadow-md); padding: 18px 20px; margin-bottom: 22px;
 }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+/* 卡片标题右侧的说明标签，路径过长时省略而不是把标题挤走 */
+.card-head .badge.small { display: inline-block; max-width: 46%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .card-title { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 1.12rem; font-weight: 800; letter-spacing: -.01em; }
 .card-title svg { width: 18px; height: 18px; color: var(--accent); }
 .card-title .muted { font-size: .88rem; font-weight: 600; }
@@ -325,7 +327,7 @@ svg { flex: none; }
 .stat-card:nth-child(6) .stat-top svg { color: var(--pink); }
 
 /* 键值、徽标、表格 */
-.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 26px; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px 26px; }
 .kv-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 2px dashed var(--border); }
 .kv-row span { color: var(--text-tertiary); font-size: .9rem; font-weight: 600; }
 .kv-row b { font-size: .94rem; font-weight: 800; word-break: break-all; }
@@ -384,19 +386,21 @@ code {
 .btn-sm { padding: 5px 10px; font-size: .86rem; box-shadow: 2px 2px 0 var(--border); }
 .btn-block { width: 100%; }
 
-/* 表单 */
-.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 13px; align-items: end; }
-.form-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.form-label { font-size: .86rem; font-weight: 800; color: var(--text-secondary); letter-spacing: .02em; }
+/* 表单：配置页用固定两列，字段宽窄一致；.inline 保留给单行的小表单 */
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 24px; align-items: start; }
+.form-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.form-grid.inline { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 13px; align-items: end; max-width: none; }
+.form-group { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.form-label { font-size: .88rem; font-weight: 800; color: var(--text-secondary); letter-spacing: .01em; line-height: 1.45; }
 /* 字段名旁的原始配置键，方便对照 YAML，但视觉上不抢主标题 */
 .form-label .key {
-  display: inline-block; margin-left: 7px; padding: 1px 6px; vertical-align: 1px;
+  display: inline-block; margin-left: 7px; padding: 1px 6px; vertical-align: 1px; white-space: nowrap;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: .72rem; font-weight: 600; letter-spacing: 0;
   color: var(--text-tertiary); background: var(--bg-primary);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
-.field-hint { display: block; font-size: .84rem; line-height: 1.55; color: var(--text-tertiary); margin-top: 2px; }
+.field-hint { display: block; max-width: 34em; font-size: .88rem; line-height: 1.65; color: var(--text-tertiary); }
 .form-input {
   width: 100%; padding: 9px 11px; background: var(--bg-secondary); color: var(--text-primary);
   border: var(--border-width) solid var(--border); border-radius: var(--radius-sm); outline: none;
@@ -410,9 +414,19 @@ select.form-input { cursor: pointer; padding-right: 30px; appearance: none;
 input[type="checkbox"].form-checkbox { width: 16px; height: 16px; accent-color: var(--accent); box-shadow: none; cursor: pointer; }
 .check-label { display: flex; align-items: center; gap: 8px; font-size: .92rem; font-weight: 700; color: var(--text-secondary); cursor: pointer; }
 textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .88rem; line-height: 1.55; resize: vertical; }
-.form-actions { display: flex; align-items: center; gap: 9px; margin-top: 14px; }
-.form-stack { display: flex; flex-direction: column; gap: 13px; }
-.hint { font-size: .88rem; color: var(--text-tertiary); margin: 13px 0 0; }
+.form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+.form-stack { display: flex; flex-direction: column; gap: 18px; }
+.hint { max-width: 46em; font-size: .9rem; line-height: 1.7; color: var(--text-tertiary); margin: 14px 0 0; }
+/* 带说明的开关行，例如设备名互访 */
+.check-line {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
+  background: var(--bg-primary); border: 2px dashed var(--border); border-radius: var(--radius-md);
+  font-size: .92rem; font-weight: 700; color: var(--text-secondary); cursor: pointer;
+}
+.check-line .form-checkbox { margin-top: 2px; flex: none; }
+.check-line small { display: block; margin-top: 3px; font-size: .88rem; font-weight: 600; line-height: 1.6; color: var(--text-tertiary); }
+/* 同一张卡片内的分组分隔 */
+.form-sep { height: 0; margin: 2px 0; border-top: 2px dashed var(--border); opacity: .28; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
 
 /* 提示条 / 日志 / 登录 */
@@ -484,6 +498,14 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .tls-block[hidden] { display: none; }
 .tls-block .hint { margin-top: 10px; }
 
+@media (max-width: 1100px) {
+  .form-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 780px) {
+  .form-grid, .form-grid.cols-3 { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .span-2 { grid-column: span 1; }
+}
+
 @media (max-width: 900px) {
   .sidebar { position: fixed; left: calc(-1 * var(--sidebar-width) - 8px); transition: left .18s ease; box-shadow: var(--shadow-lg); }
   .sidebar.show { left: 0; }
@@ -492,7 +514,6 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
   .topbar, .content { padding-left: 16px; padding-right: 16px; }
   .two-col { grid-template-columns: 1fr; }
   .net-rates { grid-template-columns: 1fr; }
-  .span-2 { grid-column: span 1; }
 }
 @media (max-width: 560px) {
   .topbar-title { font-size: .92rem; }
