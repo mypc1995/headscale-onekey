@@ -154,11 +154,12 @@ func verifyPassword(a *Admin, password string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
-func (s *AuthStore) EnsureAdmin(username, password string) error {
+func (s *AuthStore) EnsureAdmin(username, password string, lang ...string) error {
+	L := reqLang(lang)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if username == "" || password == "" {
-		return errors.New("用户名或密码为空")
+		return errors.New(tr(L, "auth.emptyCred"))
 	}
 	if a, ok := s.Admins[username]; ok {
 		a.Disabled = false
@@ -199,11 +200,12 @@ func (s *AuthStore) List() []*Admin {
 	return out
 }
 
-func (s *AuthStore) CreateAdmin(username, password, role string) error {
+func (s *AuthStore) CreateAdmin(username, password, role string, lang ...string) error {
+	L := reqLang(lang)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.Admins[username]; ok {
-		return errors.New("用户已存在")
+		return errors.New(tr(L, "auth.userExists"))
 	}
 	if role != "admin" && role != "readonly" {
 		role = "readonly"
@@ -216,39 +218,42 @@ func (s *AuthStore) CreateAdmin(username, password, role string) error {
 	return s.saveLocked()
 }
 
-func (s *AuthStore) DeleteAdmin(username string) error {
+func (s *AuthStore) DeleteAdmin(username string, lang ...string) error {
+	L := reqLang(lang)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.Admins) <= 1 {
-		return errors.New("不能删除最后一个管理员")
+		return errors.New(tr(L, "auth.lastAdmin"))
 	}
 	if _, ok := s.Admins[username]; !ok {
-		return errors.New("用户不存在")
+		return errors.New(tr(L, "auth.userMissing"))
 	}
 	delete(s.Admins, username)
 	return s.saveLocked()
 }
 
-func (s *AuthStore) SetRole(username, role string) error {
+func (s *AuthStore) SetRole(username, role string, lang ...string) error {
+	L := reqLang(lang)
 	if role != "admin" && role != "readonly" {
-		return errors.New("无效角色")
+		return errors.New(tr(L, "auth.invalidRole"))
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.Admins[username]
 	if !ok {
-		return errors.New("用户不存在")
+		return errors.New(tr(L, "auth.userMissing"))
 	}
 	a.Role = role
 	return s.saveLocked()
 }
 
-func (s *AuthStore) ChangePassword(username, password string) error {
+func (s *AuthStore) ChangePassword(username, password string, lang ...string) error {
+	L := reqLang(lang)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.Admins[username]
 	if !ok {
-		return errors.New("用户不存在")
+		return errors.New(tr(L, "auth.userMissing"))
 	}
 	h, salt, iter, err := newPasswordRecord(password)
 	if err != nil {

@@ -1,39 +1,43 @@
 {{define "admins"}}{{template "head" .}}
-<section class="panel">
-  <h2>管理员列表</h2>
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "shield" 18}} {{t .Lang "section.adminList"}}</h2><span class="badge info">{{len .Data.Admins}}</span></div>
   <div class="table-wrap"><table>
-    <tr><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr>
-    {{range .Data.Admins}}<tr>
+    <thead><tr><th>{{t .Lang "label.username"}}</th><th>{{t .Lang "label.role"}}</th><th>{{t .Lang "col.createdAt"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
+    <tbody>{{range .Data.Admins}}<tr>
       <td><b>{{.Username}}</b></td>
-      <td><span class="badge">{{.Role}}</span></td>
-      <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+      <td><span class="badge {{if eq .Role "admin"}}success{{else}}muted{{end}}">{{if eq .Role "admin"}}{{t $.Lang "role.admin"}}{{else}}{{t $.Lang "role.readonly"}}{{end}}</span></td>
+      <td class="muted small">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
       <td class="ops">
-        <form method="post" action="/admins/role">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><select name="role"><option value="admin" {{if eq .Role "admin"}}selected{{end}}>admin</option><option value="readonly" {{if eq .Role "readonly"}}selected{{end}}>readonly</option></select><button>改角色</button></form>
-        <form method="post" action="/admins/delete" onsubmit="return confirm('确认删除管理员 {{.Username}}？')">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><button class="danger">删除</button></form>
+        <form method="post" action="/admins/role">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><select class="form-input" name="role"><option value="admin" {{if eq .Role "admin"}}selected{{end}}>{{t $.Lang "role.admin"}}</option><option value="readonly" {{if eq .Role "readonly"}}selected{{end}}>{{t $.Lang "role.readonly"}}</option></select><button class="btn btn-sm" type="submit">{{t $.Lang "action.changeRole"}}</button></form>
+        <form method="post" action="/admins/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteAdmin" .Username}}')">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
-    </tr>{{end}}
+    </tr>{{end}}</tbody>
   </table></div>
 </section>
-<section class="panel">
-  <h2>新增管理员</h2>
-  <form method="post" action="/admins/create" class="grid-form">
-    {{template "csrf" .}}
-    <label>用户名<input name="username" required></label>
-    <label>密码<input name="password" type="password" required minlength="8"></label>
-    <label>角色<select name="role"><option value="readonly">只读</option><option value="admin">管理员</option></select></label>
-    <button class="primary" type="submit">创建</button>
-  </form>
+
+<section class="two-col">
+  <div class="card">
+    <div class="card-head"><h2 class="card-title">{{icon "plus" 18}} {{t .Lang "section.newAdmin"}}</h2></div>
+    <form method="post" action="/admins/create" class="form-stack">
+      {{template "csrf" .}}
+      <div class="form-group"><label class="form-label">{{t .Lang "label.username"}}<input class="form-input" name="username" required></label></div>
+      <div class="form-group"><label class="form-label">{{t .Lang "label.password"}}<input class="form-input" name="password" type="password" required minlength="8"></label></div>
+      <div class="form-group"><label class="form-label">{{t .Lang "label.role"}}<select class="form-input" name="role"><option value="readonly">{{t .Lang "role.readonly"}}</option><option value="admin">{{t .Lang "role.admin"}}</option></select></label></div>
+      <div><button class="btn btn-primary" type="submit">{{icon "plus" 15}} {{t .Lang "action.create"}}</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2 class="card-title">{{icon "lock" 18}} {{t .Lang "section.changePass"}}</h2></div>
+    <form method="post" action="/password" class="form-stack">
+      {{template "csrf" .}}
+      <div class="form-group"><label class="form-label">{{t .Lang "label.oldPassword"}}<input class="form-input" name="old_password" type="password" required></label></div>
+      <div class="form-group"><label class="form-label">{{t .Lang "label.newPassword"}}<input class="form-input" name="new_password" type="password" required minlength="8"></label></div>
+      <div><button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.changePass"}}</button></div>
+    </form>
+  </div>
 </section>
-<section class="panel">
-  <h2>修改我的密码</h2>
-  <form method="post" action="/password" class="grid-form">
-    {{template "csrf" .}}
-    <label>原密码<input name="old_password" type="password" required></label>
-    <label>新密码<input name="new_password" type="password" required minlength="8"></label>
-    <button type="submit">修改密码</button>
-  </form>
-</section>
-<section class="panel">
-  <form method="post" action="/logout">{{template "csrf" .}}<button class="danger" type="submit">退出登录</button></form>
+
+<section class="card">
+  <form method="post" action="/logout">{{template "csrf" .}}<button class="btn btn-danger" type="submit">{{icon "logout" 15}} {{t .Lang "action.logout"}}</button></form>
 </section>
 {{template "foot" .}}{{end}}

@@ -1,32 +1,82 @@
 {{define "head"}}<!doctype html>
-<html lang="zh-CN">
+<html lang="{{if eq .Lang "en"}}en{{else}}zh-CN{{end}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Title}} · Headscale Admin</title>
+<title>{{.Title}} · {{t .Lang "app.name"}}</title>
 <link rel="stylesheet" href="/static/app.css">
+<script>document.documentElement.dataset.theme=localStorage.getItem('hsa-theme')||'light';</script>
 </head>
 <body>
-<div class="app">
-<aside class="side">
-  <div class="brand"><span class="logo">HS</span><span>Headscale Admin</span></div>
-  <nav>
-    <a href="/" class="{{if eq .Active "dashboard"}}on{{end}}">总览</a>
-    <a href="/nodes" class="{{if eq .Active "nodes"}}on{{end}}">节点</a>
-    <a href="/users" class="{{if eq .Active "users"}}on{{end}}">用户</a>
-    <a href="/keys" class="{{if eq .Active "keys"}}on{{end}}">密钥与接入</a>
-    <a href="/network" class="{{if eq .Active "network"}}on{{end}}">网络与策略</a>
-    <a href="/ops" class="{{if eq .Active "ops"}}on{{end}}">运维与监控</a>
-    <a href="/admins" class="{{if eq .Active "admins"}}on{{end}}">管理员</a>
+<div class="app-layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-brand"><span class="sidebar-logo">HS</span><span>{{t .Lang "app.name"}}</span></div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">
+      <div class="nav-section-title">{{t .Lang "nav.manage"}}</div>
+      <a href="/" class="nav-link{{if eq .Active "dashboard"}} active{{end}}">{{icon "grid" 18}}<span>{{t .Lang "nav.dashboard"}}</span></a>
+      <a href="/nodes" class="nav-link{{if eq .Active "nodes"}} active{{end}}">{{icon "cpu" 18}}<span>{{t .Lang "nav.nodes"}}</span></a>
+      <a href="/users" class="nav-link{{if eq .Active "users"}} active{{end}}">{{icon "users" 18}}<span>{{t .Lang "nav.users"}}</span></a>
+      <a href="/keys" class="nav-link{{if eq .Active "keys"}} active{{end}}">{{icon "key" 18}}<span>{{t .Lang "nav.keys"}}</span></a>
+    </div>
+    <div class="nav-section">
+      <div class="nav-section-title">{{t .Lang "nav.system"}}</div>
+      <a href="/network" class="nav-link{{if eq .Active "network"}} active{{end}}">{{icon "network" 18}}<span>{{t .Lang "nav.network"}}</span></a>
+      <a href="/ops" class="nav-link{{if eq .Active "ops"}} active{{end}}">{{icon "activity" 18}}<span>{{t .Lang "nav.ops"}}</span></a>
+      <a href="/admins" class="nav-link{{if eq .Active "admins"}} active{{end}}">{{icon "shield" 18}}<span>{{t .Lang "nav.admins"}}</span></a>
+    </div>
   </nav>
-  <div class="side-foot"><span>{{.Username}}</span><span class="badge">{{if eq .Role "admin"}}管理员{{else}}只读{{end}}</span></div>
+  <div class="sidebar-foot">
+    <span class="user">{{icon "users" 14}} {{.Username}}</span>
+    <span class="badge {{if eq .Role "admin"}}success{{else}}muted{{end}}">{{if eq .Role "admin"}}{{t .Lang "role.admin"}}{{else}}{{t .Lang "role.readonly"}}{{end}}</span>
+  </div>
 </aside>
-<main class="main">
-<header class="top"><button class="menu" onclick="document.querySelector('.side').classList.toggle('show')">☰</button><h1>{{.Title}}</h1></header>
-{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<main class="main-area">
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="mobile-menu-btn" id="menu-btn" aria-label="menu">{{icon "menu" 18}}</button>
+      <div><h1 class="topbar-title">{{.Title}}</h1><div class="topbar-sub">{{t .Lang "app.subtitle"}}</div></div>
+    </div>
+    <div class="topbar-right">
+      <div class="dropdown" id="theme-dropdown">
+        <button class="dropdown-btn" id="theme-btn" title="{{t .Lang "title.theme"}}">{{icon "palette" 16}}<span id="theme-label">{{t .Lang "theme.light"}}</span>{{icon "chevron" 13}}</button>
+        <div class="dropdown-menu" id="theme-menu">
+          <button class="dropdown-item" data-theme="light"><span class="swatch" style="background:#f5f0eb;border-color:#1a1a2e"></span>{{t .Lang "theme.light"}}</button>
+          <button class="dropdown-item" data-theme="dark"><span class="swatch" style="background:#1a1a2e;border-color:#f1f5f9"></span>{{t .Lang "theme.dark"}}</button>
+          <button class="dropdown-item" data-theme="cyberpunk"><span class="swatch" style="background:#0a0a1a;border-color:#22d3ee"></span>{{t .Lang "theme.cyberpunk"}}</button>
+          <button class="dropdown-item" data-theme="ocean"><span class="swatch" style="background:#ecfeff;border-color:#0c4a6e"></span>{{t .Lang "theme.ocean"}}</button>
+          <button class="dropdown-item" data-theme="sunset"><span class="swatch" style="background:#fffbeb;border-color:#431407"></span>{{t .Lang "theme.sunset"}}</button>
+          <button class="dropdown-item" data-theme="forest"><span class="swatch" style="background:#f0fdf4;border-color:#14532d"></span>{{t .Lang "theme.forest"}}</button>
+          <button class="dropdown-item" data-theme="midnight"><span class="swatch" style="background:#000;border-color:#525252"></span>{{t .Lang "theme.midnight"}}</button>
+          <button class="dropdown-item" data-theme="dracula"><span class="swatch" style="background:#282a36;border-color:#6272a4"></span>{{t .Lang "theme.dracula"}}</button>
+          <button class="dropdown-item" data-theme="nord"><span class="swatch" style="background:#2e3440;border-color:#d8dee9"></span>{{t .Lang "theme.nord"}}</button>
+          <button class="dropdown-item" data-theme="rose"><span class="swatch" style="background:#fff1f2;border-color:#4c0519"></span>{{t .Lang "theme.rose"}}</button>
+          <button class="dropdown-item" data-theme="coffee"><span class="swatch" style="background:#f5deb3;border-color:#8b4513"></span>{{t .Lang "theme.coffee"}}</button>
+          <button class="dropdown-item" data-theme="terminal"><span class="swatch" style="background:#000;border-color:#22c55e"></span>{{t .Lang "theme.terminal"}}</button>
+          <button class="dropdown-item" data-theme="pastel"><span class="swatch" style="background:#fdf2f8;border-color:#6d28d9"></span>{{t .Lang "theme.pastel"}}</button>
+          <button class="dropdown-item" data-theme="synthwave"><span class="swatch" style="background:#2b213a;border-color:#d52d9a"></span>{{t .Lang "theme.synthwave"}}</button>
+        </div>
+      </div>
+      <div class="dropdown" id="lang-dropdown">
+        <button class="dropdown-btn" id="lang-btn" title="{{t .Lang "title.lang"}}">{{icon "globe" 16}}<span>{{langName .Lang}}</span>{{icon "chevron" 13}}</button>
+        <div class="dropdown-menu" id="lang-menu">
+          <a class="dropdown-item{{if isLang "zh" .Lang}} active{{end}}" href="/lang?lang=zh&next={{pagePath .Active}}">{{t .Lang "lang.zh"}}</a>
+          <a class="dropdown-item{{if isLang "en" .Lang}} active{{end}}" href="/lang?lang=en&next={{pagePath .Active}}">{{t .Lang "lang.en"}}</a>
+        </div>
+      </div>
+    </div>
+  </header>
+  <div class="content">
+    {{if .Flash}}<div class="flash">{{icon "check" 17}}<span>{{.Flash}}</span></div>{{end}}
 {{end}}
 
-{{define "foot"}}</main></div>
+{{define "foot"}}  </div>
+</main>
+</div>
 <script src="/static/app.js"></script>
 </body>
 </html>{{end}}
@@ -34,19 +84,24 @@
 {{define "csrf"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
 
 {{define "login"}}<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登录 · Headscale Admin</title><link rel="stylesheet" href="/static/app.css"></head>
+<html lang="{{if eq .Lang "en"}}en{{else}}zh-CN{{end}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{t .Lang "login.title"}} · {{t .Lang "app.name"}}</title><link rel="stylesheet" href="/static/app.css"></head>
 <body class="login-page">
 <div class="login-box">
-  <div class="brand center"><span class="logo">HS</span><span>Headscale Admin</span></div>
-  <h2>登录管理控制台</h2>
-  {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+  <div class="login-brand"><span class="sidebar-logo">HS</span><span>{{t .Lang "app.name"}}</span></div>
+  <div class="login-sub">{{t .Lang "app.subtitle"}}</div>
+  <h2 class="login-title">{{t .Lang "login.title"}}</h2>
+  {{if .Error}}<div class="flash error">{{icon "x" 17}}<span>{{.Error}}</span></div>{{end}}
   <form method="post" action="/login">
-    <label>用户名<input name="username" autocomplete="username" required autofocus></label>
-    <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
-    <button class="primary" type="submit">登录</button>
+    <div class="form-group"><label class="form-label" for="u">{{t .Lang "label.username"}}</label><input class="form-input" id="u" name="username" autocomplete="username" required autofocus></div>
+    <div class="form-group"><label class="form-label" for="p">{{t .Lang "label.password"}}</label><input class="form-input" id="p" type="password" name="password" autocomplete="current-password" required></div>
+    <button class="btn btn-primary btn-block" type="submit">{{icon "lock" 15}} {{t .Lang "login.submit"}}</button>
   </form>
-  <p class="hint">会话 8 小时有效，Cookie 仅 HttpOnly。</p>
+  <p class="login-hint">{{t .Lang "login.hint"}}</p>
+  <div class="login-lang">
+    <a href="/lang?lang=zh&next=/login" class="{{if eq .Lang "zh"}}active{{end}}">中文</a>
+    <a href="/lang?lang=en&next=/login" class="{{if eq .Lang "en"}}active{{end}}">English</a>
+  </div>
 </div>
 </body>
 </html>{{end}}

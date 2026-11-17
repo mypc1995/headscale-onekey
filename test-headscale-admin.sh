@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Headscale Admin 本地只读验证脚本
-# 用途：编译检查 + 临时启动服务，验证登录、CSRF、页面渲染，不碰真实 headscale
+# 用途：编译检查 + 临时启动服务，验证登录、CSRF、双语、主题与网速面板
 # 特点：所有文件在临时目录；使用假的 headscale 命令；不写 /etc、不启动 systemd
 #
 # 用法: bash test-headscale-admin.sh
@@ -22,7 +22,7 @@ info() { printf '%s[INFO]%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 FAILS=0
 
 echo "=========================================="
-echo " Headscale Admin 验证"
+echo " Headscale Admin 验证（双语 + 新 UI）"
 echo " 临时目录: $TMPDIR"
 echo "=========================================="
 
@@ -38,6 +38,9 @@ cd "$SRC_ROOT"
 go vet ./... >"$TMPDIR/vet.log" 2>&1 || { fail "go vet 失败"; tail -20 "$TMPDIR/vet.log"; exit 1; }
 go build -o "$TMPDIR/hsa" . >"$TMPDIR/build.log" 2>&1 || { fail "编译失败"; tail -30 "$TMPDIR/build.log"; exit 1; }
 ok "go vet 与编译通过"
+
+grep -q 'data-theme="dark"' "$SRC_ROOT/static/app.css" && ok "多主题样式已内置" || fail "缺少主题样式"
+grep -q 'fetch(' "$SRC_ROOT/static/app.js" && ok "实时网速刷新脚本就绪" || fail "缺少网速刷新脚本"
 
 cat >"$TMPDIR/fake-hs" <<'EOF'
 #!/bin/sh
@@ -75,15 +78,27 @@ info "验证登录与访问控制"
 curl -s -X POST "$BASE/login" -d 'username=admin&password=wrong' | grep -q '用户名或密码错误' && ok "错误密码被拒绝" || fail "错误密码未被拒绝"
 [[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "正确凭据登录成功" || fail "登录失败"
 
-info "验证页面渲染"
+info "验证中文页面与新 UI"
 for p in / /nodes /users /keys /network /ops /admins; do
   code="$(curl -s -b "$JAR" -o "$TMPDIR/page.html" -w '%{http_code}' "$BASE$p")"
-  if [[ "$code" == "200" ]] && grep -q '<h1>' "$TMPDIR/page.html"; then
+  if [[ "$code" == "200" ]] && grep -q 'class="topbar-title"' "$TMPDIR/page.html"; then
     ok "页面 $p 渲染正常"
   else
     fail "页面 $p 返回 ${code} 或缺少标题"
   fi
 done
+curl -s -b "$JAR" "$BASE/ops" | grep -q 'section.netmon\|实时网速' && ok "运维页包含实时网速面板" || fail "运维页缺少网速面板"
+curl -s -b "$JAR" "$BASE/ops" | grep -q 'spark-down' && ok "网速曲线元素存在" || fail "网速曲线缺失"
+curl -s -b "$JAR" "$BASE/api/netmon" | grep -q '"ifaces"' && ok "网速数据接口可用" || fail "网速数据接口异常"
+curl -s -b "$JAR" "$BASE/" | grep -q 'id="theme-dropdown"' && ok "主题切换控件存在" || fail "主题切换控件缺失"
+
+info "验证中英文切换"
+curl -s -b "$JAR" -c "$JAR" "$BASE/lang?lang=en&next=/" -o /dev/null -w ''
+curl -s -b "$JAR" "$BASE/" | grep -q 'Dashboard' && ok "英文界面标题生效" || fail "英文界面未生效"
+curl -s -b "$JAR" "$BASE/ops" | grep -q 'Live network speed' && ok "英文网速文案生效" || fail "英文网速文案缺失"
+curl -s -b "$JAR" "$BASE/users" | grep -q 'New user' && ok "英文表单文案生效" || fail "英文表单文案缺失"
+curl -s -b "$JAR" -c "$JAR" "$BASE/lang?lang=zh&next=/" -o /dev/null
+curl -s -b "$JAR" "$BASE/" | grep -q '总览' && ok "切回中文生效" || fail "切回中文失败"
 
 info "验证 CSRF"
 curl -s -b "$JAR" "$BASE/users" -o "$TMPDIR/users.html"

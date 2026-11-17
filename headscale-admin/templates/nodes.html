@@ -1,33 +1,34 @@
 {{define "nodes"}}{{template "head" .}}
-<section class="panel">
-  <h2>节点列表 <span class="muted">{{len .Data.Nodes}} 个</span></h2>
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "cpu" 18}} {{t .Lang "section.nodeList"}}</h2><span class="badge info">{{len .Data.Nodes}}</span></div>
   {{if .Data.Nodes}}<div class="table-wrap"><table>
-    <tr><th>ID</th><th>名称</th><th>用户</th><th>地址</th><th>状态</th><th>标签/路由</th><th>操作</th></tr>
-    {{range .Data.Nodes}}<tr>
+    <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.name"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.address"}}</th><th>{{t .Lang "col.status"}}</th><th>{{t .Lang "col.tagsRoutes"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
+    <tbody>{{range .Data.Nodes}}<tr>
       <td>{{field . "id"}}</td>
       <td><b>{{field . "name"}}</b><div class="muted small">{{short (field . "node_key") 22}}</div></td>
       <td>{{userOf .}}</td>
-      <td>{{list (index . "ip_addresses")}}</td>
-      <td>{{if eq (field . "online") "true"}}<span class="ok">在线</span>{{else}}<span class="muted">离线</span>{{end}}<div class="muted small">{{tf (index . "last_seen")}}</div></td>
-      <td><div class="muted small">标签：{{list (index . "tags")}}</div><div class="muted small">已批路由：{{list (index . "approved_routes")}}</div><div class="muted small">可用路由：{{list (index . "available_routes")}}</div></td>
+      <td class="small">{{list (index . "ip_addresses")}}</td>
+      <td>{{if eq (field . "online") "true"}}<span class="badge success"><span class="dot"></span>{{t $.Lang "state.online"}}</span>{{else}}<span class="badge muted">{{t $.Lang "state.offline"}}</span>{{end}}<div class="muted small">{{tf (index . "last_seen")}}</div></td>
+      <td class="small"><div class="muted">{{t $.Lang "label.nodeTags"}}: {{list (index . "tags")}}</div><div class="muted">{{t $.Lang "label.approved"}}: {{list (index . "approved_routes")}}</div><div class="muted">{{t $.Lang "label.available"}}: {{list (index . "available_routes")}}</div></td>
       <td class="ops">
-        <form method="post" action="/nodes/rename" onsubmit="return confirm('重命名节点？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input name="name" value="{{field . "name"}}" required><button>重命名</button></form>
-        <form method="post" action="/nodes/tag" onsubmit="return confirm('覆盖节点标签？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input name="tags" placeholder="tag1,tag2"><button>设标签</button></form>
-        <form method="post" action="/nodes/expire" onsubmit="return confirm('立即登出该节点？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="warn">过期</button></form>
-        <form method="post" action="/nodes/delete" onsubmit="return confirm('确认删除该节点？不可恢复。')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="danger">删除</button></form>
+        <form method="post" action="/nodes/rename" onsubmit="return confirm('{{t $.Lang "confirm.renameNode"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="name" value="{{field . "name"}}" required><button class="btn btn-sm" type="submit">{{t $.Lang "action.rename"}}</button></form>
+        <form method="post" action="/nodes/tag" onsubmit="return confirm('{{t $.Lang "confirm.tagNode"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="tags" placeholder="tag1,tag2"><button class="btn btn-sm" type="submit">{{t $.Lang "action.tag"}}</button></form>
+        <form method="post" action="/nodes/expire" onsubmit="return confirm('{{t $.Lang "confirm.expireNode"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.expire"}}</button></form>
+        <form method="post" action="/nodes/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteNode"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
-    </tr>{{end}}
-  </table></div>{{else}}<p class="empty">暂无节点。生成预授权密钥后用 Tailscale 客户端接入。</p>{{end}}
+    </tr>{{end}}</tbody>
+  </table></div>{{else}}<div class="empty">{{icon "cpu" 18}} {{t .Lang "empty.nodes"}}</div>{{end}}
 </section>
-<section class="panel">
-  <h2>路由审批 <span class="muted">{{len .Data.Routes}} 个节点</span></h2>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "route" 18}} {{t .Lang "section.routeReview"}}</h2><span class="badge info">{{len .Data.Routes}}</span></div>
   {{if .Data.Routes}}<div class="table-wrap"><table>
-    <tr><th>节点 ID</th><th>节点</th><th>可用路由</th><th>已批准</th><th>操作</th></tr>
-    {{range .Data.Routes}}<tr>
-      <td>{{field . "id"}}</td><td>{{field . "name"}}</td>
-      <td>{{list (index . "available_routes")}}</td><td>{{list (index . "approved_routes")}}</td>
-      <td><form method="post" action="/nodes/approve" onsubmit="return confirm('更新已批准路由？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input name="routes" placeholder="10.0.0.0/8,192.168.1.0/24" value="{{list (index . "approved_routes")}}"><button>批准</button></form></td>
-    </tr>{{end}}
-  </table></div>{{else}}<p class="empty">没有节点宣告路由。</p>{{end}}
+    <thead><tr><th>{{t .Lang "col.nodeID"}}</th><th>{{t .Lang "col.node"}}</th><th>{{t .Lang "col.availableRoutes"}}</th><th>{{t .Lang "col.approvedRoutes"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
+    <tbody>{{range .Data.Routes}}<tr>
+      <td>{{field . "id"}}</td><td><b>{{field . "name"}}</b></td>
+      <td class="small">{{list (index . "available_routes")}}</td><td class="small">{{list (index . "approved_routes")}}</td>
+      <td class="ops"><form method="post" action="/nodes/approve" onsubmit="return confirm('{{t $.Lang "confirm.approveRoute"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="routes" placeholder="10.0.0.0/8,192.168.1.0/24" value="{{list (index . "approved_routes")}}"><button class="btn btn-sm btn-primary" type="submit">{{t $.Lang "action.approve"}}</button></form></td>
+    </tr>{{end}}</tbody>
+  </table></div>{{else}}<div class="empty">{{icon "route" 18}} {{t .Lang "empty.routes"}}</div>{{end}}
 </section>
 {{template "foot" .}}{{end}}

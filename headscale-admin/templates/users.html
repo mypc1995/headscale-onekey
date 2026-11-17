@@ -1,26 +1,26 @@
 {{define "users"}}{{template "head" .}}
-<section class="panel">
-  <h2>新建用户</h2>
-  <form method="post" action="/users/create" class="grid-form">
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "plus" 18}} {{t .Lang "section.newUser"}}</h2></div>
+  <form method="post" action="/users/create" class="form-grid">
     {{template "csrf" .}}
-    <label>用户名<input name="name" required></label>
-    <label>显示名<input name="display_name"></label>
-    <label>邮箱<input name="email" type="email"></label>
-    <label>头像 URL<input name="picture_url"></label>
-    <button class="primary" type="submit">创建</button>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.username"}}<input class="form-input" name="name" required></label></div>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.displayName"}}<input class="form-input" name="display_name"></label></div>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.email"}}<input class="form-input" name="email" type="email"></label></div>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.avatar"}}<input class="form-input" name="picture_url"></label></div>
+    <div class="form-group"><button class="btn btn-primary" type="submit">{{icon "plus" 15}} {{t .Lang "action.create"}}</button></div>
   </form>
 </section>
-<section class="panel">
-  <h2>用户列表 <span class="muted">{{len .Data.Users}} 个</span></h2>
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "users" 18}} {{t .Lang "section.userList"}}</h2><span class="badge info">{{len .Data.Users}}</span></div>
   {{if .Data.Users}}<div class="table-wrap"><table>
-    <tr><th>ID</th><th>用户名</th><th>创建时间</th><th>操作</th></tr>
-    {{range .Data.Users}}<tr>
-      <td>{{.ID}}</td><td><b>{{.Name}}</b></td><td>{{tf .CreatedAt}}</td>
+    <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.name"}}</th><th>{{t .Lang "col.createdAt"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
+    <tbody>{{range .Data.Users}}<tr>
+      <td>{{.ID}}</td><td><b>{{.Name}}</b></td><td class="muted small">{{tf .CreatedAt}}</td>
       <td class="ops">
-        <form method="post" action="/users/rename" onsubmit="return confirm('重命名用户？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><input name="new_name" value="{{.Name}}" required><button>重命名</button></form>
-        <form method="post" action="/users/delete" onsubmit="return confirm('删除用户 {{.Name}}？该用户下的节点需要重新分配。')">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><button class="danger">删除</button></form>
+        <form method="post" action="/users/rename" onsubmit="return confirm('{{t $.Lang "confirm.renameUser"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><input class="form-input" name="new_name" value="{{.Name}}" required><button class="btn btn-sm" type="submit">{{t $.Lang "action.rename"}}</button></form>
+        <form method="post" action="/users/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteUser" .Name}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
-    </tr>{{end}}
-  </table></div>{{else}}<p class="empty">暂无用户。</p>{{end}}
+    </tr>{{end}}</tbody>
+  </table></div>{{else}}<div class="empty">{{icon "users" 18}} {{t .Lang "empty.users"}}</div>{{end}}
 </section>
 {{template "foot" .}}{{end}}

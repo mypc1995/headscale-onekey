@@ -33,6 +33,7 @@ type networkData struct {
 }
 
 type opsData struct {
+	Net        NetSnapshot
 	Service    string
 	Version    string
 	Cert       string
@@ -50,7 +51,7 @@ func (a *App) nodesPage(w http.ResponseWriter, r *http.Request) {
 	if v, err := a.hs.Nodes(); err == nil {
 		d.Nodes = v
 	} else {
-		a.sessions.SetFlash(sessionFrom(r).Token, "读取节点失败："+err.Error())
+		a.sessions.SetFlash(sessionFrom(r).Token, tr(langFrom(r), "msg.readNodesFail", err.Error()))
 	}
 	if v, err := a.hs.Routes(); err == nil {
 		d.Routes = v
@@ -63,7 +64,7 @@ func (a *App) usersPage(w http.ResponseWriter, r *http.Request) {
 	if v, err := a.hs.Users(); err == nil {
 		d.Users = v
 	} else {
-		a.sessions.SetFlash(sessionFrom(r).Token, "读取用户失败："+err.Error())
+		a.sessions.SetFlash(sessionFrom(r).Token, tr(langFrom(r), "msg.readUsersFail", err.Error()))
 	}
 	a.render(w, r, "users", d)
 }
@@ -84,7 +85,7 @@ func (a *App) keysPage(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) networkPage(w http.ResponseWriter, r *http.Request) {
 	d := networkData{}
-	if v, err := a.hs.Policy(); err == nil {
+	if v, err := a.hs.Policy(langFrom(r)); err == nil {
 		d.ACL = v
 	}
 	if v, err := a.hs.ReadConfigText(); err == nil {
@@ -95,12 +96,12 @@ func (a *App) networkPage(w http.ResponseWriter, r *http.Request) {
 		d.ServerURL = topValue(v, "server_url")
 		d.ListenAddr = topValue(v, "listen_addr")
 	}
-	d.PolicyPath = a.hs.PolicyPath()
+	d.PolicyPath = a.hs.PolicyPath(langFrom(r))
 	a.render(w, r, "network", d)
 }
 
 func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
-	d := opsData{Service: "未知", Version: a.hs.Version(), Cert: certExpiry(), Logs: journal(80), ConfigPath: a.hs.Config, PolicyPath: a.hs.PolicyPath()}
+	d := opsData{Net: a.net.Snapshot(), Service: tr(langFrom(r), "state.unknown"), Version: a.hs.Version(), Cert: certExpiry(), Logs: journal(80), ConfigPath: a.hs.Config, PolicyPath: a.hs.PolicyPath(langFrom(r))}
 	if out, err := systemctl("is-active", "headscale"); err == nil {
 		d.Service = strings.TrimSpace(out)
 	}
@@ -117,7 +118,7 @@ func (a *App) userCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		a.redirectWithFlash(w, r, "/users", "用户名不能为空")
+		a.redirectWithFlash(w, r, "/users", tr(langFrom(r), "msg.usernameRequired"))
 		return
 	}
 	args := []string{"users", "create", name}
@@ -140,7 +141,7 @@ func (a *App) userRename(w http.ResponseWriter, r *http.Request) {
 	}
 	newName := strings.TrimSpace(r.FormValue("new_name"))
 	if newName == "" {
-		a.redirectWithFlash(w, r, "/users", "新用户名不能为空")
+		a.redirectWithFlash(w, r, "/users", tr(langFrom(r), "msg.newNameRequired"))
 		return
 	}
 	a.doAction(w, r, "/users", func() (string, error) {
@@ -251,7 +252,7 @@ func (a *App) preauthCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := strings.TrimSpace(r.FormValue("user_id"))
 	if userID == "" {
-		a.redirectWithFlash(w, r, "/keys", "请选择用户")
+		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.selectUser"))
 		return
 	}
 	exp := strings.TrimSpace(r.FormValue("expiration"))
@@ -260,10 +261,10 @@ func (a *App) preauthCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := a.hs.CreatePreauthKey(userID, exp, r.FormValue("reusable") == "on", r.FormValue("ephemeral") == "on", strings.TrimSpace(r.FormValue("tags")))
 	if err != nil {
-		a.redirectWithFlash(w, r, "/keys", "生成失败："+err.Error())
+		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/keys", "预授权密钥（仅显示一次）："+extractKey(out))
+	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.preauthOnce", extractKey(out)))
 }
 
 func (a *App) preauthExpire(w http.ResponseWriter, r *http.Request) {
@@ -300,10 +301,10 @@ func (a *App) apiKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := a.hs.CreateAPIKey(exp)
 	if err != nil {
-		a.redirectWithFlash(w, r, "/keys", "生成失败："+err.Error())
+		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/keys", "API key（仅显示一次）："+extractKey(out))
+	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.apiOnce", extractKey(out)))
 }
 
 func (a *App) apiKeyExpire(w http.ResponseWriter, r *http.Request) {
@@ -336,18 +337,18 @@ func (a *App) saveACL(w http.ResponseWriter, r *http.Request) {
 	}
 	content := r.FormValue("acl")
 	if strings.TrimSpace(content) == "" {
-		a.redirectWithFlash(w, r, "/network", "ACL 策略不能为空")
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.aclRequired"))
 		return
 	}
-	if err := a.hs.SavePolicy(content); err != nil {
-		a.redirectWithFlash(w, r, "/network", "保存失败："+err.Error())
+	if err := a.hs.SavePolicy(content, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
 		return
 	}
 	if out, err := a.hs.Action("configtest", "-c", a.hs.Config); err != nil {
-		a.redirectWithFlash(w, r, "/network", "已保存，但配置校验失败："+err.Error()+" "+out)
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.savedInvalid", err.Error(), out))
 		return
 	}
-	a.redirectWithFlash(w, r, "/network", "ACL 已保存并通过配置校验（原文件已备份）")
+	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.aclSaved"))
 }
 
 func (a *App) saveConfig(w http.ResponseWriter, r *http.Request) {
@@ -356,18 +357,18 @@ func (a *App) saveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	content := r.FormValue("config")
 	if strings.TrimSpace(content) == "" {
-		a.redirectWithFlash(w, r, "/network", "配置不能为空")
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.configRequired"))
 		return
 	}
 	if err := a.hs.SaveConfig(content); err != nil {
-		a.redirectWithFlash(w, r, "/network", "保存失败："+err.Error())
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
 		return
 	}
 	if out, err := a.hs.Action("configtest", "-c", a.hs.Config); err != nil {
-		a.redirectWithFlash(w, r, "/network", "已保存，但配置校验失败："+err.Error()+" "+out)
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.savedInvalid", err.Error(), out))
 		return
 	}
-	a.redirectWithFlash(w, r, "/network", "配置已保存并通过校验（原文件已备份），重启服务后生效")
+	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.configSaved"))
 }
 
 func (a *App) saveDNS(w http.ResponseWriter, r *http.Request) {
@@ -376,22 +377,22 @@ func (a *App) saveDNS(w http.ResponseWriter, r *http.Request) {
 	}
 	base := strings.TrimSpace(r.FormValue("base_domain"))
 	if base == "" {
-		a.redirectWithFlash(w, r, "/network", "base_domain 不能为空")
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.baseRequired"))
 		return
 	}
 	magic := "false"
 	if r.FormValue("magic_dns") == "on" {
 		magic = "true"
 	}
-	if err := a.hs.UpdateNested("dns", "base_domain", base); err != nil {
-		a.redirectWithFlash(w, r, "/network", "保存失败："+err.Error())
+	if err := a.hs.UpdateNested("dns", "base_domain", base, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
 		return
 	}
-	if err := a.hs.UpdateNested("dns", "magic_dns", magic); err != nil {
-		a.redirectWithFlash(w, r, "/network", "保存失败："+err.Error())
+	if err := a.hs.UpdateNested("dns", "magic_dns", magic, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/network", "DNS 设置已保存，重启服务后生效")
+	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.dnsSaved"))
 }
 
 func (a *App) saveDERP(w http.ResponseWriter, r *http.Request) {
@@ -402,11 +403,11 @@ func (a *App) saveDERP(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("enabled") == "on" {
 		enabled = "true"
 	}
-	if err := a.hs.UpdateDERP("enabled", enabled); err != nil {
-		a.redirectWithFlash(w, r, "/network", "保存失败："+err.Error())
+	if err := a.hs.UpdateDERP("enabled", enabled, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/network", "DERP 开关已保存，重启服务后生效")
+	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.derpSaved"))
 }
 
 func (a *App) restartHeadscale(w http.ResponseWriter, r *http.Request) {
@@ -415,10 +416,10 @@ func (a *App) restartHeadscale(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := systemctl("restart", "headscale")
 	if err != nil {
-		a.redirectWithFlash(w, r, "/ops", "重启失败："+err.Error()+" "+out)
+		a.redirectWithFlash(w, r, "/ops", tr(langFrom(r), "msg.restartFail", err.Error(), out))
 		return
 	}
-	a.redirectWithFlash(w, r, "/ops", "headscale 服务已重启")
+	a.redirectWithFlash(w, r, "/ops", tr(langFrom(r), "msg.restarted"))
 }
 
 func (a *App) adminCreate(w http.ResponseWriter, r *http.Request) {
@@ -429,14 +430,14 @@ func (a *App) adminCreate(w http.ResponseWriter, r *http.Request) {
 	pass := r.FormValue("password")
 	role := r.FormValue("role")
 	if user == "" || pass == "" {
-		a.redirectWithFlash(w, r, "/admins", "用户名和密码不能为空")
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.adminRequired"))
 		return
 	}
-	if err := a.store.CreateAdmin(user, pass, role); err != nil {
-		a.redirectWithFlash(w, r, "/admins", "创建失败："+err.Error())
+	if err := a.store.CreateAdmin(user, pass, role, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.createFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/admins", "管理员 "+user+" 已创建")
+	a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.adminCreated", user))
 }
 
 func (a *App) adminDelete(w http.ResponseWriter, r *http.Request) {
@@ -444,11 +445,11 @@ func (a *App) adminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := strings.TrimSpace(r.FormValue("username"))
-	if err := a.store.DeleteAdmin(user); err != nil {
-		a.redirectWithFlash(w, r, "/admins", "删除失败："+err.Error())
+	if err := a.store.DeleteAdmin(user, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.deleteFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/admins", "管理员 "+user+" 已删除")
+	a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.adminDeleted", user))
 }
 
 func (a *App) adminRole(w http.ResponseWriter, r *http.Request) {
@@ -456,11 +457,11 @@ func (a *App) adminRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := strings.TrimSpace(r.FormValue("username"))
-	if err := a.store.SetRole(user, r.FormValue("role")); err != nil {
-		a.redirectWithFlash(w, r, "/admins", "修改失败："+err.Error())
+	if err := a.store.SetRole(user, r.FormValue("role"), langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.roleFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/admins", "角色已更新")
+	a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.roleUpdated"))
 }
 
 func (a *App) passwordChange(w http.ResponseWriter, r *http.Request) {
@@ -469,17 +470,23 @@ func (a *App) passwordChange(w http.ResponseWriter, r *http.Request) {
 	}
 	s := sessionFrom(r)
 	if _, ok := a.store.Verify(s.Username, r.FormValue("old_password")); !ok {
-		a.redirectWithFlash(w, r, "/admins", "原密码错误")
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.oldPassWrong"))
 		return
 	}
 	newPass := r.FormValue("new_password")
 	if len(newPass) < 8 {
-		a.redirectWithFlash(w, r, "/admins", "新密码至少 8 位")
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.newPassShort"))
 		return
 	}
-	if err := a.store.ChangePassword(s.Username, newPass); err != nil {
-		a.redirectWithFlash(w, r, "/admins", "修改失败："+err.Error())
+	if err := a.store.ChangePassword(s.Username, newPass, langFrom(r)); err != nil {
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.updateFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/admins", "密码已修改")
+	a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.passChanged"))
+}
+
+// netmonAPI 供运维页定时刷新实时网速。
+func (a *App) netmonAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(a.net.Snapshot())
 }

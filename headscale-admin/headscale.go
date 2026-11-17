@@ -256,13 +256,14 @@ func deepValue(content string, block string, key string) string {
 	return strings.Trim(strings.TrimSpace(inner[1]), `"'`)
 }
 
-func replaceLine(content string, pattern string, replacement string) (string, error) {
+func replaceLine(content string, pattern string, replacement string, lang ...string) (string, error) {
+	L := reqLang(lang)
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", err
 	}
 	if !re.MatchString(content) {
-		return content, errors.New("未找到待修改的配置项")
+		return content, errors.New(tr(L, "hs.noConfigItem"))
 	}
 	return re.ReplaceAllString(content, replacement), nil
 }
@@ -290,7 +291,8 @@ func (c *HSClient) UpdateTop(key string, value string) error {
 	return c.chownConfig()
 }
 
-func (c *HSClient) UpdateNested(block string, key string, value string) error {
+func (c *HSClient) UpdateNested(block string, key string, value string, lang ...string) error {
+	L := reqLang(lang)
 	b, err := c.configBytes()
 	if err != nil {
 		return err
@@ -298,10 +300,10 @@ func (c *HSClient) UpdateNested(block string, key string, value string) error {
 	re := regexp.MustCompile(`(?ms)(^` + regexp.QuoteMeta(block) + `:\s*\n)((?:[ \t]+.*\n?)*)`)
 	loc := re.FindStringSubmatchIndex(string(b))
 	if loc == nil {
-		return errors.New("未找到配置块 " + block)
+		return errors.New(tr(L, "hs.noConfigBlock", block))
 	}
 	inner := b[loc[2]:loc[3]]
-	innerNext, err := replaceLine(string(inner), `(?m)^  `+regexp.QuoteMeta(key)+`:.*$`, "  "+key+": "+value)
+	innerNext, err := replaceLine(string(inner), `(?m)^  `+regexp.QuoteMeta(key)+`:.*$`, "  "+key+": "+value, L)
 	if err != nil {
 		return err
 	}
@@ -329,7 +331,8 @@ func (c *HSClient) SaveConfig(content string) error {
 	return c.chownConfig()
 }
 
-func (c *HSClient) UpdateDERP(key string, value string) error {
+func (c *HSClient) UpdateDERP(key string, value string, lang ...string) error {
+	L := reqLang(lang)
 	b, err := c.configBytes()
 	if err != nil {
 		return err
@@ -337,7 +340,7 @@ func (c *HSClient) UpdateDERP(key string, value string) error {
 	re := regexp.MustCompile(`(?ms)(^derp:\s*\n)((?:[ \t]+.*\n?)*)`)
 	loc := re.FindStringSubmatchIndex(string(b))
 	if loc == nil {
-		return errors.New("未找到 derp 配置块")
+		return errors.New(tr(L, "hs.noDerpBlock"))
 	}
 	inner := b[loc[2]:loc[3]]
 	innerNext, err := replaceLine(string(inner), `(?m)^    `+regexp.QuoteMeta(key)+`:.*$`, "    "+key+": "+value)
@@ -351,7 +354,7 @@ func (c *HSClient) UpdateDERP(key string, value string) error {
 	return c.chownConfig()
 }
 
-func (c *HSClient) PolicyPath() string {
+func (c *HSClient) PolicyPath(lang ...string) string {
 	b, err := c.configBytes()
 	if err != nil {
 		return ""
@@ -359,10 +362,11 @@ func (c *HSClient) PolicyPath() string {
 	return nestedValue(string(b), "policy", "path")
 }
 
-func (c *HSClient) Policy() (string, error) {
+func (c *HSClient) Policy(lang ...string) (string, error) {
+	L := reqLang(lang)
 	p := c.PolicyPath()
 	if p == "" {
-		return "", errors.New("未配置 policy.path")
+		return L, errors.New(tr(L, "hs.noPolicyPath"))
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -371,10 +375,11 @@ func (c *HSClient) Policy() (string, error) {
 	return string(b), nil
 }
 
-func (c *HSClient) SavePolicy(content string) error {
+func (c *HSClient) SavePolicy(content string, lang ...string) error {
+	L := reqLang(lang)
 	p := c.PolicyPath()
 	if p == "" {
-		return errors.New("未配置 policy.path")
+		return errors.New(tr(L, "hs.noPolicyPath"))
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		return err

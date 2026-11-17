@@ -1,6 +1,6 @@
 # headscale-onekey
 
-一键部署私有 [Headscale](https://github.com/juanfont/headscale) 控制服务器，并可选择部署社区项目 HeadControl 作为中文 Web 管理界面。
+一键部署私有 [Headscale](https://github.com/juanfont/headscale) 控制服务器，可选择部署社区项目 HeadControl，或本项目的全量管理界面 Headscale Admin（支持中英文、多套配色与实时网速）。
 
 面向 Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora，支持 x86_64 与 aarch64。已在 WSL Ubuntu 与 AlmaLinux 9 实机验证；当前脚本按 Headscale v0.29.7 的配置格式编写。
 
@@ -17,6 +17,7 @@
 - 可选部署 HeadControl，默认直接开放 3000 端口，并自动完成 API key 初始化。
 - HeadControl 默认启用 HTTP Basic Auth：未指定密码时自动生成，凭据以带盐摘要存入仅 root 可读的 systemd 环境文件。
 - HeadControl 默认应用中文补丁：页面、菜单、按钮、前端提示、后端 toast 与错误信息均已汉化。
+- 可选部署 Headscale Admin：中英文一键切换、14 套配色主题、实时网卡流量曲线、完整账号与权限体系。
 
 ## 目录结构
 
@@ -29,7 +30,7 @@
 | `deploy-headscale-admin.sh` | 全量管理界面一键部署（默认 3001） |
 | `headscale-admin/` | 全量管理界面 Go 源码、模板与静态资源 |
 | `test-headcontrol-patch.sh` | 汉化补丁、Basic Auth 应用与编译验证 |
-| `test-headscale-admin.sh` | 全量管理界面编译、登录与 CSRF 验证 |
+| `test-headscale-admin.sh` | 全量管理界面编译、登录、双语、主题、网速与 CSRF 验证 |
 
 ## 快速开始
 
@@ -102,7 +103,7 @@ sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
 
 ### 3. 部署全量管理界面（Headscale Admin）
 
-HeadControl 比较轻量。如果需要完整管理界面，可部署本项目的 `headscale-admin`：Go 单二进制，中文界面，默认跑在 3001，可与 3000 的 HeadControl 并行。
+HeadControl 比较轻量。如果需要完整管理界面，可部署本项目的 `headscale-admin`：Go 单二进制，中英文界面，默认跑在 3001，可与 3000 的 HeadControl 并行。
 
 ```bash
 sudo bash deploy-headscale-admin.sh --port 3001
@@ -124,8 +125,10 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 - 用户：创建、重命名、删除，支持显示名与邮箱。
 - 密钥与接入：预授权密钥生成/失效/删除，API key 生成/失效/删除，客户端接入命令。
 - 网络与策略：ACL 策略编辑、DNS/MagicDNS、DERP 开关、完整配置编辑；保存前自动备份并做 `configtest` 校验。
-- 运维与监控：服务状态、版本、证书到期、最近日志、重启服务。
+- 运维与监控：服务状态、版本、证书到期、最近日志、重启服务，以及每 3 秒刷新的实时网速（读取 `/proc/net/dev`，含上下行速率、累计流量、各网卡明细与近期曲线；非 Linux 自动降级为不可用提示）。
 - 管理员：管理员增删改、角色（admin/readonly）、修改密码。
+
+界面支持中英文切换：顶部地球图标可切换语言，选择保存在 Cookie 中，登录页也能切换。主题下拉提供 14 套配色（浅色、深色、赛博朋克、海洋、日落、森林、午夜、德古拉、北欧、玫瑰、咖啡、终端、柔和、合成波），选择保存在浏览器本地，界面采用暖色底、粗边框、硬阴影的新粗野主义风格，图标全部内联，不依赖外部 CDN。
 
 认证采用独立账号体系：密码用 PBKDF2-HMAC-SHA256（12 万次迭代）加盐保存，会话使用 HttpOnly Cookie，所有表单带 CSRF token，只读角色无法提交修改。源码目录为 `headscale-admin/`，不依赖任何未声明许可证的第三方项目。
 
@@ -136,7 +139,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
 bash test-headcontrol-patch.sh    # 验证汉化补丁、Basic Auth 与 Go 编译（需 git/go/gcc/curl/openssl）
-bash test-headscale-admin.sh      # 验证全量管理界面编译、登录、页面与 CSRF（需 go/curl）
+bash test-headscale-admin.sh      # 验证全量管理界面编译、登录、双语、主题、网速与 CSRF（需 go/curl）
 ```
 
 ## 安全提示

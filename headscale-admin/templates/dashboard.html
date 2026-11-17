@@ -1,32 +1,35 @@
 {{define "dashboard"}}{{template "head" .}}
-<section class="cards">
-  <div class="card"><span>用户总数</span><strong>{{.Data.Users}}</strong></div>
-  <div class="card"><span>节点总数</span><strong>{{.Data.Nodes}}</strong></div>
-  <div class="card"><span>在线节点</span><strong>{{.Data.Online}}</strong></div>
-  <div class="card"><span>可用路由</span><strong>{{.Data.Routes}}</strong></div>
-  <div class="card"><span>预授权密钥</span><strong>{{.Data.PreauthKeys}}</strong></div>
-  <div class="card"><span>API key</span><strong>{{.Data.APIKeys}}</strong></div>
+<section class="stat-grid">
+  <div class="stat-card"><div class="stat-top">{{icon "users" 17}} {{t .Lang "stat.users"}}</div><div class="stat-value">{{.Data.Users}}</div></div>
+  <div class="stat-card"><div class="stat-top">{{icon "cpu" 17}} {{t .Lang "stat.nodes"}}</div><div class="stat-value">{{.Data.Nodes}}</div></div>
+  <div class="stat-card"><div class="stat-top">{{icon "activity" 17}} {{t .Lang "stat.online"}}</div><div class="stat-value">{{.Data.Online}}</div></div>
+  <div class="stat-card"><div class="stat-top">{{icon "route" 17}} {{t .Lang "stat.routes"}}</div><div class="stat-value">{{.Data.Routes}}</div></div>
+  <div class="stat-card"><div class="stat-top">{{icon "key" 17}} {{t .Lang "stat.preauth"}}</div><div class="stat-value">{{.Data.PreauthKeys}}</div></div>
+  <div class="stat-card"><div class="stat-top">{{icon "lock" 17}} {{t .Lang "stat.apiKeys"}}</div><div class="stat-value">{{.Data.APIKeys}}</div></div>
 </section>
-<section class="panel">
-  <h2>服务状态</h2>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "server" 18}} {{t .Lang "section.service"}}</h2></div>
   <div class="kv">
-    <div><span>headscale 服务</span><b class="{{if eq .Data.Service "active"}}ok{{else}}bad{{end}}">{{.Data.Service}}</b></div>
-    <div><span>版本</span><b>{{.Data.Version}}</b></div>
-    <div><span>证书到期</span><b>{{.Data.Cert}}</b></div>
-    <div><span>配置文件</span><b>/etc/headscale/config.yaml</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.service"}}</span><b>{{if eq .Data.Service "active"}}<span class="badge success"><span class="dot"></span>{{t .Lang "state.active"}}</span>{{else}}<span class="badge danger">{{.Data.Service}}</span>{{end}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.version"}}</span><b>{{.Data.Version}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.cert"}}</span><b>{{.Data.Cert}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.configFile"}}</span><b><code>/etc/headscale/config.yaml</code></b></div>
   </div>
 </section>
-<section class="panel">
-  <h2>最近节点</h2>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "cpu" 18}} {{t .Lang "section.recent"}}</h2><span class="badge muted">{{t .Lang "hint.recentCount" (len .Data.Recent)}}</span></div>
   {{if .Data.Recent}}
   <div class="table-wrap"><table>
-    <tr><th>ID</th><th>名称</th><th>用户</th><th>地址</th><th>在线</th><th>最后在线</th></tr>
-    {{range .Data.Recent}}<tr>
-      <td>{{field . "id"}}</td><td>{{field . "name"}}</td><td>{{userOf .}}</td>
+    <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.name"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.address"}}</th><th>{{t .Lang "col.online"}}</th><th>{{t .Lang "col.lastSeen"}}</th></tr></thead>
+    <tbody>{{range .Data.Recent}}<tr>
+      <td>{{field . "id"}}</td><td><b>{{field . "name"}}</b></td><td>{{userOf .}}</td>
       <td>{{list (index . "ip_addresses")}}</td>
-      <td>{{field . "online"}}</td><td>{{tf (index . "last_seen")}}</td>
-    </tr>{{end}}
+      <td>{{if eq (field . "online") "true"}}<span class="badge success"><span class="dot"></span>{{t $.Lang "state.online"}}</span>{{else}}<span class="badge muted">{{t $.Lang "state.offline"}}</span>{{end}}</td>
+      <td class="muted small">{{tf (index . "last_seen")}}</td>
+    </tr>{{end}}</tbody>
   </table></div>
-  {{else}}<p class="empty">暂无节点接入。可在「密钥与接入」生成预授权密钥。</p>{{end}}
+  {{else}}<div class="empty">{{icon "database" 18}} {{t .Lang "empty.recent"}}</div>{{end}}
 </section>
 {{template "foot" .}}{{end}}

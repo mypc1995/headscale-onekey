@@ -1,17 +1,58 @@
 {{define "ops"}}{{template "head" .}}
-<section class="panel">
-  <h2>运行状态</h2>
-  <div class="kv">
-    <div><span>headscale 服务</span><b class="{{if eq .Data.Service "active"}}ok{{else}}bad{{end}}">{{.Data.Service}}</b></div>
-    <div><span>版本</span><b>{{.Data.Version}}</b></div>
-    <div><span>证书到期</span><b>{{.Data.Cert}}</b></div>
-    <div><span>配置文件</span><b>{{.Data.ConfigPath}}</b></div>
-    <div><span>策略文件</span><b>{{.Data.PolicyPath}}</b></div>
+<section class="card" id="netmon">
+  <div class="card-head">
+    <h2 class="card-title">{{icon "activity" 18}} {{t .Lang "section.netmon"}}</h2>
+    <span class="badge success" id="net-status">{{if .Data.Net.Available}}<span class="dot"></span>{{.Data.Net.Updated}}{{else}}{{t .Lang "net.unavailable"}}{{end}}</span>
   </div>
-  <form method="post" action="/ops/restart" onsubmit="return confirm('确认重启 headscale 服务？现有连接会短暂中断。')">{{template "csrf" .}}<button class="warn" type="submit">重启 headscale</button></form>
+  <div class="net-rates">
+    <div class="net-rate">
+      <div class="net-rate-label">{{icon "activity" 15}} {{t .Lang "net.download"}}</div>
+      <div class="net-rate-value" id="net-down">{{rate .Data.Net.TotalRx}}</div>
+    </div>
+    <div class="net-rate">
+      <div class="net-rate-label">{{icon "activity" 15}} {{t .Lang "net.upload"}}</div>
+      <div class="net-rate-value up" id="net-up">{{rate .Data.Net.TotalTx}}</div>
+    </div>
+  </div>
+  <svg class="spark" viewBox="0 0 600 100" preserveAspectRatio="none" role="img" aria-label="{{t .Lang "net.sparkDown"}}">
+    <defs>
+      <linearGradient id="grad-down" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--success)" stop-opacity=".32"/><stop offset="1" stop-color="var(--success)" stop-opacity="0"/></linearGradient>
+    </defs>
+    <polyline id="spark-down-fill" fill="url(#grad-down)" stroke="none" points=""></polyline>
+    <polyline id="spark-down" fill="none" stroke="var(--success)" stroke-width="2.5" points=""></polyline>
+    <polyline id="spark-up" fill="none" stroke="var(--purple)" stroke-width="2" points=""></polyline>
+  </svg>
+  <div class="net-legend">
+    <span><i class="legend-line down"></i>{{t .Lang "net.download"}} <b id="net-total-down">{{bytes .Data.Net.TotalRxBytes}}</b></span>
+    <span><i class="legend-line up"></i>{{t .Lang "net.upload"}} <b id="net-total-up">{{bytes .Data.Net.TotalTxBytes}}</b></span>
+    <span class="muted" id="net-time">{{t .Lang "net.updated" .Data.Net.Updated}}</span>
+  </div>
+  <div class="table-wrap net-table">
+    <table>
+      <thead><tr><th>{{t .Lang "net.iface"}}</th><th>{{t .Lang "net.download"}}</th><th>{{t .Lang "net.upload"}}</th><th>{{t .Lang "net.totalDown"}}</th><th>{{t .Lang "net.totalUp"}}</th></tr></thead>
+      <tbody id="net-ifaces">
+        {{range .Data.Net.Ifaces}}<tr><td><b>{{.Name}}</b></td><td class="ok">{{rate .RxRate}}</td><td class="accent">{{rate .TxRate}}</td><td class="muted">{{bytes .RxTotal}}</td><td class="muted">{{bytes .TxTotal}}</td></tr>{{end}}
+      </tbody>
+    </table>
+  </div>
 </section>
-<section class="panel">
-  <h2>最近日志 <span class="muted">journalctl -u headscale -n 80</span></h2>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "server" 18}} {{t .Lang "section.status"}}</h2></div>
+  <div class="kv">
+    <div class="kv-row"><span>{{t .Lang "field.service"}}</span><b>{{if eq .Data.Service "active"}}<span class="badge success"><span class="dot"></span>{{t .Lang "state.active"}}</span>{{else}}<span class="badge danger">{{.Data.Service}}</span>{{end}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.version"}}</span><b>{{.Data.Version}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.cert"}}</span><b>{{.Data.Cert}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "field.configFile"}}</span><b class="small"><code>{{.Data.ConfigPath}}</code></b></div>
+    <div class="kv-row"><span>{{t .Lang "field.policyFile"}}</span><b class="small"><code>{{.Data.PolicyPath}}</code></b></div>
+  </div>
+  <div class="form-actions">
+    <form method="post" action="/ops/restart" onsubmit="return confirm('{{t .Lang "confirm.restart"}}')">{{template "csrf" .}}<button class="btn btn-warning" type="submit">{{icon "refresh" 15}} {{t .Lang "action.restart"}}</button></form>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "terminal" 18}} {{t .Lang "section.logs"}}</h2><span class="badge muted small">journalctl -u headscale -n 80</span></div>
   <pre class="logs">{{.Data.Logs}}</pre>
 </section>
 {{template "foot" .}}{{end}}

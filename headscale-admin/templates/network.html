@@ -1,35 +1,37 @@
 {{define "network"}}{{template "head" .}}
-<section class="panel">
-  <h2>ACL 策略 <span class="muted">{{.Data.PolicyPath}}</span></h2>
-  <form method="post" action="/network/acl" onsubmit="return confirm('保存 ACL 策略？原文件会自动备份。')">
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "file" 18}} {{t .Lang "section.acl"}}</h2><span class="badge muted small">{{.Data.PolicyPath}}</span></div>
+  <form method="post" action="/network/acl" onsubmit="return confirm('{{t .Lang "confirm.saveACL"}}')">
     {{template "csrf" .}}
-    <textarea name="acl" rows="18" spellcheck="false">{{.Data.ACL}}</textarea>
-    <button class="primary" type="submit">保存并校验</button>
+    <textarea class="form-input" name="acl" rows="18" spellcheck="false">{{.Data.ACL}}</textarea>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "action.saveValidate"}}</button></div>
   </form>
 </section>
-<section class="panel">
-  <h2>DNS 与 DERP</h2>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "network" 18}} {{t .Lang "section.dnsDerp"}}</h2></div>
   <div class="two-col">
-    <form method="post" action="/network/dns" class="grid-form">
+    <form method="post" action="/network/dns" class="form-stack">
       {{template "csrf" .}}
-      <label>MagicDNS 根域<input name="base_domain" value="{{.Data.BaseDomain}}" required></label>
-      <label class="check"><input type="checkbox" name="magic_dns" {{if eq .Data.MagicDNS "true"}}checked{{end}}> 启用 MagicDNS</label>
-      <button type="submit">保存 DNS</button>
+      <div class="form-group"><label class="form-label">{{t .Lang "label.baseDomain"}}<input class="form-input" name="base_domain" value="{{.Data.BaseDomain}}" required></label></div>
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="magic_dns" {{if eq .Data.MagicDNS "true"}}checked{{end}}> {{t .Lang "label.magicDNS"}}</label>
+      <div><button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.saveDNS"}}</button></div>
     </form>
-    <form method="post" action="/network/derp" class="grid-form">
+    <form method="post" action="/network/derp" class="form-stack">
       {{template "csrf" .}}
-      <label class="check"><input type="checkbox" name="enabled" {{if eq .Data.DERPEnabled "true"}}checked{{end}}> 启用内置 DERP</label>
-      <button type="submit">保存 DERP</button>
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="enabled" {{if eq .Data.DERPEnabled "true"}}checked{{end}}> {{t .Lang "label.derp"}}</label>
+      <div><button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.saveDERP"}}</button></div>
     </form>
   </div>
-  <p class="hint">当前 server_url：<code>{{.Data.ServerURL}}</code>　监听：<code>{{.Data.ListenAddr}}</code>。配置修改后需重启服务。</p>
+  <p class="hint">{{t .Lang "hint.serverURL" .Data.ServerURL .Data.ListenAddr}}</p>
 </section>
-<section class="panel">
-  <h2>完整配置 <span class="muted">/etc/headscale/config.yaml</span></h2>
-  <form method="post" action="/network/config" onsubmit="return confirm('确认覆盖完整配置？原文件会自动备份，保存后会先做 configtest 校验。')">
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "server" 18}} {{t .Lang "section.fullConfig"}}</h2></div>
+  <form method="post" action="/network/config" onsubmit="return confirm('{{t .Lang "confirm.saveConfig"}}')">
     {{template "csrf" .}}
-    <textarea name="config" rows="20" spellcheck="false">{{.Data.Config}}</textarea>
-    <button class="danger" type="submit">覆盖保存</button>
+    <textarea class="form-input" name="config" rows="20" spellcheck="false">{{.Data.Config}}</textarea>
+    <div class="form-actions"><button class="btn btn-danger" type="submit">{{icon "save" 15}} {{t .Lang "action.overwrite"}}</button></div>
   </form>
 </section>
 {{template "foot" .}}{{end}}

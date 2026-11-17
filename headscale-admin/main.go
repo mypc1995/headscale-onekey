@@ -19,6 +19,7 @@ type App struct {
 	store    *AuthStore
 	sessions *SessionManager
 	hs       *HSClient
+	net      *NetMonitor
 	tmpl     *template.Template
 	port     string
 	tplDir   string
@@ -32,6 +33,7 @@ type Page struct {
 	Flash    string
 	Username string
 	Role     string
+	Lang     string
 	Data     any
 	Year     int
 }
@@ -92,6 +94,13 @@ func main() {
 		"has":      strings.Contains,
 		"short":    func(s string, n int) string { if len(s) > n { return s[:n] + "…" }; return s },
 		"yearNow":  func() int { return time.Now().Year() },
+		"t":        tr,
+		"icon":     icon,
+		"langName": func(l string) string { if l == "en" { return "English" }; return "中文" },
+		"isLang":   func(l, cur string) bool { return l == cur },
+		"pagePath": func(active string) string { if active == "dashboard" || active == "" { return "/" }; return "/" + active },
+		"rate":     fmtRate,
+		"bytes":    fmtBytes,
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseGlob(filepath.Join(*tplDir, "*.html"))
 	if err != nil {
@@ -99,13 +108,14 @@ func main() {
 	}
 
 	a := &App{
-		store: store, sessions: NewSessionManager(*secureCookie), hs: NewHSClient(),
+		store: store, sessions: NewSessionManager(*secureCookie), hs: NewHSClient(), net: NewNetMonitor(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("POST /login", a.loginPost)
+	mux.HandleFunc("GET /lang", a.setLanguage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(*staticDir))))
 	mux.Handle("GET /health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
 
@@ -117,6 +127,7 @@ func main() {
 	p.HandleFunc("GET /network", a.networkPage)
 	p.HandleFunc("GET /ops", a.opsPage)
 	p.HandleFunc("GET /admins", a.adminsPage)
+	p.HandleFunc("GET /api/netmon", a.netmonAPI)
 	a.registerActions(p)
 	mux.Handle("/", a.sessions.Wrap(p))
 
@@ -161,17 +172,19 @@ func joinAny(v any) string {
 }
 
 var pageTitles = map[string]string{
-	"dashboard": "总览", "nodes": "节点管理", "users": "用户管理", "keys": "密钥与接入",
-	"network": "网络与策略", "ops": "运维与监控", "admins": "管理员",
+	"dashboard": "title.dashboard", "nodes": "title.nodes", "users": "title.users", "keys": "title.keys",
+	"network": "title.network", "ops": "title.ops", "admins": "title.admins",
 }
 
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data any) {
 	s := sessionFrom(r)
+	lang := langFrom(r)
 	title := pageTitles[name]
 	if title == "" {
 		title = name
 	}
-	p := Page{Title: title, Active: name, CSRF: s.CSRF, Username: s.Username, Role: s.Role, Data: data, Year: time.Now().Year()}
+	title = tr(lang, title)
+	p := Page{Title: title, Active: name, CSRF: s.CSRF, Username: s.Username, Role: s.Role, Lang: lang, Data: data, Year: time.Now().Year()}
 	p.Flash = a.sessions.TakeFlash(s.Token)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.tmpl.ExecuteTemplate(w, name, p); err != nil {
@@ -186,8 +199,9 @@ func (a *App) redirectWithFlash(w http.ResponseWriter, r *http.Request, to, msg 
 
 func (a *App) mutate(w http.ResponseWriter, r *http.Request) bool {
 	s := sessionFrom(r)
+	lang := langFrom(r)
 	if !validCSRF(r, s) {
-		http.Error(w, "CSRF 校验失败", http.StatusBadRequest)
+		http.Error(w, tr(lang, "msg.csrfFailed"), http.StatusBadRequest)
 		return false
 	}
 	if s.Role != "admin" {
@@ -195,7 +209,7 @@ func (a *App) mutate(w http.ResponseWriter, r *http.Request) bool {
 		if ref == "" {
 			ref = "/"
 		}
-		a.redirectWithFlash(w, r, ref, "只读账号无权修改")
+		a.redirectWithFlash(w, r, ref, tr(lang, "msg.readonlyBlocked"))
 		return false
 	}
 	return true
@@ -204,27 +218,42 @@ func (a *App) mutate(w http.ResponseWriter, r *http.Request) bool {
 func formUint(r *http.Request, key string) (uint64, error) {
 	v := strings.TrimSpace(r.FormValue(key))
 	if v == "" {
-		return 0, errors.New("缺少参数 " + key)
+		return 0, errors.New(tr(langFrom(r), "msg.missingParam", key))
 	}
 	return strconv.ParseUint(v, 10, 64)
 }
 
 func (a *App) doAction(w http.ResponseWriter, r *http.Request, to string, fn func() (string, error)) {
+	lang := langFrom(r)
 	out, err := fn()
 	if err != nil {
-		a.redirectWithFlash(w, r, to, "操作失败："+err.Error())
+		a.redirectWithFlash(w, r, to, tr(lang, "msg.operationFailed", err.Error()))
 		return
 	}
 	msg := strings.TrimSpace(out)
-	if len(msg) > 120 {
-		msg = msg[:120] + "…"
+	if len(msg) > 160 {
+		msg = msg[:160] + "…"
 	}
 	if msg == "" {
-		msg = "操作成功"
+		msg = tr(lang, "msg.operationSuccess")
 	} else {
-		msg = "操作成功：" + msg
+		msg = tr(lang, "msg.successWith", msg)
 	}
 	a.redirectWithFlash(w, r, to, msg)
+}
+
+// setLanguage 在未登录时也可用，方便登录页切换语言。
+func (a *App) setLanguage(w http.ResponseWriter, r *http.Request) {
+	lang := normalizeLang(r.URL.Query().Get("lang"))
+	http.SetCookie(w, &http.Cookie{
+		Name: "hsa_lang", Value: lang, Path: "/", SameSite: http.SameSiteLaxMode,
+		Secure: a.sessions.secure, MaxAge: 365 * 24 * 3600,
+	})
+	next := r.URL.Query().Get("next")
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		next = "/login"
+	}
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -235,18 +264,18 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": ""})
+	_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": "", "Lang": langFrom(r)})
 }
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "表单解析失败", http.StatusBadRequest)
+		http.Error(w, tr(langFrom(r), "msg.operationFailed", err.Error()), http.StatusBadRequest)
 		return
 	}
 	admin, ok := a.store.Verify(r.FormValue("username"), r.FormValue("password"))
 	if !ok {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": "用户名或密码错误"})
+		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(langFrom(r), "login.error"), "Lang": langFrom(r)})
 		return
 	}
 	s := a.sessions.Create(admin.Username, admin.Role)
@@ -338,4 +367,27 @@ func fatalIf(err error) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func fmtRate(v float64) string {
+	if v >= 1024 {
+		return fmt.Sprintf("%.2f MB/s", v/1024)
+	}
+	if v >= 1 {
+		return fmt.Sprintf("%.1f KB/s", v)
+	}
+	return fmt.Sprintf("%.0f B/s", v*1024)
+}
+
+func fmtBytes(v uint64) string {
+	if v >= 1<<30 {
+		return fmt.Sprintf("%.2f GB", float64(v)/(1<<30))
+	}
+	if v >= 1<<20 {
+		return fmt.Sprintf("%.1f MB", float64(v)/(1<<20))
+	}
+	if v >= 1<<10 {
+		return fmt.Sprintf("%.1f KB", float64(v)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", v)
 }
