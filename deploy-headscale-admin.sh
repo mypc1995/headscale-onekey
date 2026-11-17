@@ -21,7 +21,8 @@ SRC_ROOT="$SCRIPT_DIR"
 [[ -f "$SRC_ROOT/main.go" ]] || SRC_ROOT="$SCRIPT_DIR/headscale-admin"
 INSTALL_DIR="/opt/headscale-admin"
 DATA_DIR="/var/lib/headscale-admin"
-ADMIN_FILE="${DATA_DIR}/admins.json"
+DB_FILE="${DATA_DIR}/headscale-admin.db"
+LEGACY_JSON="${DATA_DIR}/admins.json"
 BIN="/usr/local/bin/headscale-admin"
 SERVICE_FILE="/etc/systemd/system/headscale-admin.service"
 
@@ -67,9 +68,13 @@ command -v openssl >/dev/null 2>&1 || error "缺少 openssl"
 [[ -f "$SRC_ROOT/main.go" ]] || error "未找到源码 main.go，请在仓库目录运行"
 
 # 已有管理员且不是重置时，保留原密码
-if [[ -f "$ADMIN_FILE" && "$RESET_ADMIN" != "yes" ]]; then
+if [[ -f "$DB_FILE" || -f "$LEGACY_JSON" ]] && [[ "$RESET_ADMIN" != "yes" ]]; then
   PRESERVE_ADMIN="yes"
-  log "检测到已有管理员文件，保留现有密码（如需重置加 --reset-admin）"
+  if [[ -f "$DB_FILE" ]]; then
+    log "检测到已有数据库，保留现有管理员密码（如需重置加 --reset-admin）"
+  else
+    log "检测到旧版 admins.json，将自动迁移到 SQLite 并保留原密码"
+  fi
 else
   if [[ -z "$ADMIN_PASS" ]]; then
     if [[ -t 0 ]]; then
@@ -95,7 +100,10 @@ go version && gcc --version | head -1
 
 step "编译 Headscale Admin"
 cd "$SRC_ROOT"
-go mod tidy >/dev/null 2>&1 || error "go mod tidy 失败"
+# 纯 Go 的 SQLite 驱动，无需 gcc；国内机器默认走 goproxy.cn，可用 GOPROXY 覆盖。
+export GOPROXY="${GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct}"
+log "下载 Go 依赖（GOPROXY=${GOPROXY}）"
+go mod download >/dev/null 2>&1 || warn "go mod download 未完全成功，尝试直接编译"
 NEW_BIN="${BIN}.new"
 CGO_ENABLED=0 go build -o "$NEW_BIN" . >/dev/null 2>&1 || error "编译失败"
 mkdir -p "$INSTALL_DIR" "$DATA_DIR"
@@ -115,8 +123,10 @@ if [[ "$PRESERVE_ADMIN" != "yes" ]]; then
     INIT_ARGS+=(--init-admin "${ADMIN_USER}:${ADMIN_PASS}")
   fi
   step "初始化管理员"
-  HSA_DATA_FILE="$ADMIN_FILE" "$BIN" --init-only "${INIT_ARGS[@]}" || error "管理员初始化失败"
-  chmod 600 "$ADMIN_FILE"
+  HSA_DATA_FILE="$DB_FILE" HSA_LEGACY_JSON="$LEGACY_JSON" "$BIN" --init-only "${INIT_ARGS[@]}" || error "管理员初始化失败"
+  chmod 600 "$DB_FILE" 2>/dev/null || true
+  [[ -f "$DB_FILE-wal" ]] && chmod 600 "$DB_FILE-wal"
+  [[ -f "$DB_FILE-shm" ]] && chmod 600 "$DB_FILE-shm"
 fi
 
 step "创建 systemd 服务（端口 ${PORT}）"
@@ -131,7 +141,8 @@ Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
 Environment=HSA_PORT=${PORT}
-Environment=HSA_DATA_FILE=${ADMIN_FILE}
+Environment=HSA_DATA_FILE=${DB_FILE}
+Environment=HSA_LEGACY_JSON=${LEGACY_JSON}
 Environment=HSA_TEMPLATES=${INSTALL_DIR}/templates
 Environment=HSA_STATIC=${INSTALL_DIR}/static
 ExecStart=${BIN}
@@ -181,7 +192,7 @@ cat <<EOF
 服务状态     : $(systemctl is-active headscale-admin)（开机自启）
 访问地址     : http://<服务器IP>:${PORT}
 健康检查     : http://127.0.0.1:${PORT}/health
-管理员文件   : ${ADMIN_FILE} (0700)
+数据库文件   : ${DB_FILE} (0600)
 ============
 EOF
 if [[ "$PRESERVE_ADMIN" == "yes" ]]; then

@@ -40,7 +40,8 @@ type Page struct {
 
 func main() {
 	port := flag.String("port", envDefault("HSA_PORT", "3001"), "监听端口")
-	dataFile := flag.String("data", envDefault("HSA_DATA_FILE", "/var/lib/headscale-admin/admins.json"), "管理员数据文件")
+	dbFile := flag.String("data", envDefault("HSA_DATA_FILE", "/var/lib/headscale-admin/headscale-admin.db"), "SQLite 数据库路径")
+	legacyJSON := flag.String("legacy-json", envDefault("HSA_LEGACY_JSON", "/var/lib/headscale-admin/admins.json"), "旧版管理员 JSON，首次启动时自动迁移")
 	tplDir := flag.String("templates", envDefault("HSA_TEMPLATES", "/opt/headscale-admin/templates"), "模板目录")
 	staticDir := flag.String("static", envDefault("HSA_STATIC", "/opt/headscale-admin/static"), "静态资源目录")
 	initAdmin := flag.String("init-admin", "", "初始化管理员，格式 用户名:密码")
@@ -51,7 +52,7 @@ func main() {
 	initOnly := flag.Bool("init-only", false, "初始化管理员后立即退出")
 	flag.Parse()
 
-	store, err := LoadAuthStore(*dataFile)
+	store, err := OpenStore(*dbFile, *legacyJSON)
 	if err != nil {
 		log.Fatalf("加载管理员数据失败: %v", err)
 	}
@@ -101,6 +102,13 @@ func main() {
 		"pagePath": func(active string) string { if active == "dashboard" || active == "" { return "/" }; return "/" + active },
 		"rate":     fmtRate,
 		"bytes":    fmtBytes,
+		"dict": func(pairs ...any) map[string]any {
+			m := map[string]any{}
+			for i := 0; i+1 < len(pairs); i += 2 {
+				m[fmt.Sprint(pairs[i])] = pairs[i+1]
+			}
+			return m
+		},
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseGlob(filepath.Join(*tplDir, "*.html"))
 	if err != nil {
@@ -108,7 +116,7 @@ func main() {
 	}
 
 	a := &App{
-		store: store, sessions: NewSessionManager(*secureCookie), hs: NewHSClient(), net: NewNetMonitor(),
+		store: store, sessions: NewSessionManager(store.DB, *secureCookie), hs: NewHSClient(), net: NewNetMonitor(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir,
 	}
 

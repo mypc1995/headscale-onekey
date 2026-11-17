@@ -82,6 +82,16 @@
 </body>
 </html>{{end}}
 
+{{define "expiryOptions"}}
+<option value="1h"{{if eq .Default "1h"}} selected{{end}}>{{t .Lang "expiry.1h"}}</option>
+<option value="24h"{{if eq .Default "24h"}} selected{{end}}>{{t .Lang "expiry.24h"}}</option>
+<option value="7d"{{if eq .Default "7d"}} selected{{end}}>{{t .Lang "expiry.7d"}}</option>
+<option value="30d"{{if eq .Default "30d"}} selected{{end}}>{{t .Lang "expiry.30d"}}</option>
+<option value="90d"{{if eq .Default "90d"}} selected{{end}}>{{t .Lang "expiry.90d"}}</option>
+<option value="1y"{{if eq .Default "1y"}} selected{{end}}>{{t .Lang "expiry.1y"}}</option>
+<option value="long"{{if eq .Default "long"}} selected{{end}}>{{t .Lang "expiry.long"}}</option>
+{{end}}
+
 {{define "csrf"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
 
 {{define "login"}}<!doctype html>

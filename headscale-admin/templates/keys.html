@@ -4,7 +4,7 @@
   <form method="post" action="/keys/preauth/create" class="form-grid">
     {{template "csrf" .}}
     <div class="form-group"><label class="form-label">{{t .Lang "label.user"}}<select class="form-input" name="user_id" required>{{range .Data.Users}}<option value="{{.ID}}">{{.Name}} (ID {{.ID}})</option>{{end}}</select></label></div>
-    <div class="form-group"><label class="form-label">{{t .Lang "label.expiry"}}<input class="form-input" name="expiration" value="24h" required></label></div>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.expiry"}}<select class="form-input" name="expiration">{{template "expiryOptions" (dict "Lang" $.Lang "Default" "24h")}}</select></label></div>
     <div class="form-group"><label class="form-label">{{t .Lang "label.tags"}}<input class="form-input" name="tags" placeholder="tag1,tag2"></label></div>
     <div class="form-group"><label class="check-label"><input class="form-checkbox" type="checkbox" name="reusable"> {{t .Lang "label.reusable"}}</label></div>
     <div class="form-group"><label class="check-label"><input class="form-checkbox" type="checkbox" name="ephemeral"> {{t .Lang "label.ephemeral"}}</label></div>
@@ -31,7 +31,7 @@
   <div class="card-head"><h2 class="card-title">{{icon "lock" 18}} {{t .Lang "section.genAPI"}}</h2></div>
   <form method="post" action="/keys/api/create" class="form-grid">
     {{template "csrf" .}}
-    <div class="form-group"><label class="form-label">{{t .Lang "label.expiry"}}<input class="form-input" name="expiration" value="90d" required></label></div>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.expiry"}}<select class="form-input" name="expiration">{{template "expiryOptions" (dict "Lang" $.Lang "Default" "90d")}}</select></label></div>
     <div class="form-group"><button class="btn btn-primary" type="submit">{{icon "bolt" 15}} {{t .Lang "action.generate"}}</button></div>
   </form>
 </section>

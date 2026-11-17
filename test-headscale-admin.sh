@@ -57,8 +57,8 @@ EOF
 chmod +x "$TMPDIR/fake-hs"
 
 info "初始化测试管理员"
-HSA_DATA_FILE="$TMPDIR/admins.json" "$TMPDIR/hsa" --init-only --admin-user admin --admin-pass testpass123 >"$TMPDIR/init.log" 2>&1 || { fail "初始化失败"; cat "$TMPDIR/init.log"; exit 1; }
-[[ -f "$TMPDIR/admins.json" ]] && ok "管理员文件已生成" || fail "管理员文件未生成"
+HSA_DATA_FILE="$TMPDIR/app.db" HSA_LEGACY_JSON="$TMPDIR/admins.json" "$TMPDIR/hsa" --init-only --admin-user admin --admin-pass testpass123 >"$TMPDIR/init.log" 2>&1 || { fail "初始化失败"; cat "$TMPDIR/init.log"; exit 1; }
+[[ -s "$TMPDIR/app.db" ]] && ok "SQLite 数据库已生成" || fail "SQLite 数据库未生成"
 
 cat >"$TMPDIR/config.yaml" <<'YAML'
 server_url: http://127.0.0.1:8080
@@ -85,7 +85,7 @@ YAML
 
 PORT=$((39000 + RANDOM % 1000))
 HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" "$TMPDIR/hsa" \
-  -port "$PORT" -data "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
+  -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
   >"$TMPDIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 40); do

@@ -237,6 +237,18 @@ func (a *App) nodeApprove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// normalizeExpiry 只接受下拉里的固定取值，把「长期」映射成 100 年。
+func normalizeExpiry(v, fallback string) string {
+	switch strings.TrimSpace(v) {
+	case "1h", "24h", "7d", "30d", "90d", "1y":
+		return strings.TrimSpace(v)
+	case "long":
+		return "100y"
+	default:
+		return fallback
+	}
+}
+
 func extractKey(out string) string {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err == nil {
@@ -256,10 +268,7 @@ func (a *App) preauthCreate(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.selectUser"))
 		return
 	}
-	exp := strings.TrimSpace(r.FormValue("expiration"))
-	if exp == "" {
-		exp = "24h"
-	}
+	exp := normalizeExpiry(r.FormValue("expiration"), "24h")
 	out, err := a.hs.CreatePreauthKey(userID, exp, r.FormValue("reusable") == "on", r.FormValue("ephemeral") == "on", strings.TrimSpace(r.FormValue("tags")))
 	if err != nil {
 		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
@@ -296,10 +305,7 @@ func (a *App) apiKeyCreate(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
-	exp := strings.TrimSpace(r.FormValue("expiration"))
-	if exp == "" {
-		exp = "90d"
-	}
+	exp := normalizeExpiry(r.FormValue("expiration"), "90d")
 	out, err := a.hs.CreateAPIKey(exp)
 	if err != nil {
 		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
