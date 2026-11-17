@@ -1,0 +1,6 @@
+*.sh    text eol=lf
+*.patch text eol=lf
+*.md    text eol=lf
+LICENSE text eol=lf
+NOTICE  text eol=lf
+.gitignore text eol=lf
