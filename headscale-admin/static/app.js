@@ -135,3 +135,16 @@
   refresh();
   setInterval(refresh, 3000);
 })();
+
+// 配置页：按证书模式显示对应字段
+(function () {
+  var sel = document.getElementById('tls_mode');
+  if (!sel) return;
+  function sync() {
+    document.querySelectorAll('[data-tls-mode]').forEach(function (el) {
+      el.hidden = el.getAttribute('data-tls-mode') !== sel.value;
+    });
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();

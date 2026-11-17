@@ -60,8 +60,31 @@ info "初始化测试管理员"
 HSA_DATA_FILE="$TMPDIR/admins.json" "$TMPDIR/hsa" --init-only --admin-user admin --admin-pass testpass123 >"$TMPDIR/init.log" 2>&1 || { fail "初始化失败"; cat "$TMPDIR/init.log"; exit 1; }
 [[ -f "$TMPDIR/admins.json" ]] && ok "管理员文件已生成" || fail "管理员文件未生成"
 
+cat >"$TMPDIR/config.yaml" <<'YAML'
+server_url: http://127.0.0.1:8080
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: ""
+grpc_listen_addr: 127.0.0.1:50443
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+acme_url: https://acme-v02.api.letsencrypt.org/directory
+acme_email: ""
+tls_letsencrypt_hostname: ""
+tls_letsencrypt_cache_dir: /var/lib/headscale/cache
+tls_letsencrypt_challenge_type: HTTP-01
+tls_letsencrypt_listen: ":http"
+tls_cert_path: ""
+tls_key_path: ""
+dns:
+  magic_dns: true
+  base_domain: hs.example.com
+policy:
+  path: ""
+YAML
+
 PORT=$((39000 + RANDOM % 1000))
-HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" "$TMPDIR/hsa" \
+HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
   >"$TMPDIR/server.log" 2>&1 &
 SERVER_PID=$!
@@ -79,7 +102,7 @@ curl -s -X POST "$BASE/login" -d 'username=admin&password=wrong' | grep -q '用�
 [[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "正确凭据登录成功" || fail "登录失败"
 
 info "验证中文页面与新 UI"
-for p in / /nodes /users /keys /network /ops /admins; do
+for p in / /nodes /users /keys /network /settings /ops /admins; do
   code="$(curl -s -b "$JAR" -o "$TMPDIR/page.html" -w '%{http_code}' "$BASE$p")"
   if [[ "$code" == "200" ]] && grep -q 'class="topbar-title"' "$TMPDIR/page.html"; then
     ok "页面 $p 渲染正常"
@@ -92,11 +115,43 @@ curl -s -b "$JAR" "$BASE/ops" | grep -q 'spark-down' && ok "网速曲线元素�
 curl -s -b "$JAR" "$BASE/api/netmon" | grep -q '"ifaces"' && ok "网速数据接口可用" || fail "网速数据接口异常"
 curl -s -b "$JAR" "$BASE/" | grep -q 'id="theme-dropdown"' && ok "主题切换控件存在" || fail "主题切换控件缺失"
 
+info "验证 Headscale 配置页"
+curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings.html"
+for kw in '域名与接入' 'IP 与监听' 'SSL 证书' '证书自动更新'; do
+  grep -q "$kw" "$TMPDIR/settings.html" && ok "配置页包含「$kw」" || fail "配置页缺少「$kw」"
+done
+grep -q 'value="http://127.0.0.1:8080"' "$TMPDIR/settings.html" && ok "配置页回显 server_url" || fail "配置页未回显 server_url"
+CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/settings.html" | head -1 | sed 's/.*value="//;s/"//')"
+
+curl -s -b "$JAR" -X POST "$BASE/settings/domain" \
+  -d "csrf=${CSRF}&server_url=ftp://x&base_domain=hs.example.com&apply_now=" -o "$TMPDIR/e1.html"
+grep -q '只支持 http:// 或 https://' "$TMPDIR/e1.html" && ok "非法协议被拦截" || fail "非法协议未被拦截"
+
+curl -s -b "$JAR" -X POST "$BASE/settings/network" \
+  -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=10.0.0.0/8&prefix_v6=" -o "$TMPDIR/e2.html"
+grep -q '100.64.0.0/10' "$TMPDIR/e2.html" && ok "越界 IPv4 段被拦截" || fail "越界 IPv4 段未被拦截"
+
+curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+  -d "csrf=${CSRF}&tls_mode=letsencrypt&tls_letsencrypt_hostname=&acme_email=bad&tls_letsencrypt_challenge_type=HTTP-01&tls_letsencrypt_listen=:http&tls_letsencrypt_cache_dir=/var/lib/headscale/cache" -o "$TMPDIR/e3.html"
+grep -q 'ACME 证书域名不能为空' "$TMPDIR/e3.html" && ok "缺少证书域名被拦截" || fail "缺少证书域名未被拦截"
+grep -q '邮箱格式不正确' "$TMPDIR/e3.html" && ok "非法邮箱被拦截" || fail "非法邮箱未被拦截"
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+  code="$(curl -s -b "$JAR" -X POST "$BASE/settings/domain" \
+    -d "csrf=${CSRF}&server_url=http://127.0.0.1:8080&base_domain=hs.example.com&apply_now=" -o /dev/null -w '%{http_code}')"
+  [[ "$code" == "303" ]] && ok "合法域名配置保存成功" || fail "合法配置保存失败 (${code})"
+  grep -q '^server_url: http://127.0.0.1:8080' "$TMPDIR/config.yaml" && ok "配置已写入文件" || fail "配置未写入"
+  ls "$TMPDIR"/config.yaml.bak.* >/dev/null 2>&1 && ok "原配置已备份" || fail "未生成备份"
+else
+  info "非 Linux 环境无法执行 headscale configtest，跳过写入链路（由远程测试覆盖）"
+fi
+
 info "验证中英文切换"
 curl -s -b "$JAR" -c "$JAR" "$BASE/lang?lang=en&next=/" -o /dev/null -w ''
 curl -s -b "$JAR" "$BASE/" | grep -q 'Dashboard' && ok "英文界面标题生效" || fail "英文界面未生效"
 curl -s -b "$JAR" "$BASE/ops" | grep -q 'Live network speed' && ok "英文网速文案生效" || fail "英文网速文案缺失"
 curl -s -b "$JAR" "$BASE/users" | grep -q 'New user' && ok "英文表单文案生效" || fail "英文表单文案缺失"
+curl -s -b "$JAR" "$BASE/settings" | grep -q 'Certificate auto-renewal' && ok "英文配置页生效" || fail "英文配置页缺失"
 curl -s -b "$JAR" -c "$JAR" "$BASE/lang?lang=zh&next=/" -o /dev/null
 curl -s -b "$JAR" "$BASE/" | grep -q '总览' && ok "切回中文生效" || fail "切回中文失败"
 

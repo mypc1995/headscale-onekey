@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -489,4 +490,175 @@ func (a *App) passwordChange(w http.ResponseWriter, r *http.Request) {
 func (a *App) netmonAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(a.net.Snapshot())
+}
+
+// ---------- Headscale 配置管理 ----------
+
+func (a *App) settingsPage(w http.ResponseWriter, r *http.Request) {
+	a.render(w, r, "settings", a.hs.loadConfigPage(langFrom(r)))
+}
+
+// settingsDomain 保存域名与接入配置（server_url / MagicDNS 根域 / MagicDNS 开关）。
+func (a *App) settingsDomain(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	lang := langFrom(r)
+	p := a.hs.loadConfigPage(lang)
+	p.ServerURL = strings.TrimSpace(r.FormValue("server_url"))
+	p.BaseDomain = strings.TrimSpace(r.FormValue("base_domain"))
+	p.MagicDNS = r.FormValue("magic_dns") == "on"
+
+	if errs := validateDomain(p, lang); len(errs) > 0 {
+		p.Errors = errs
+		p.Warnings = configWarnings(p, lang)
+		a.render(w, r, "settings", p)
+		return
+	}
+	next, err := a.hs.buildConfig(p, "domain")
+	if err != nil {
+		p.Errors = map[string]string{"server_url": err.Error()}
+		a.render(w, r, "settings", p)
+		return
+	}
+	a.applySettings(w, r, p, next, "cfg.msg.domainSaved")
+}
+
+// settingsNetwork 保存监听地址与客户端地址段。
+func (a *App) settingsNetwork(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	lang := langFrom(r)
+	p := a.hs.loadConfigPage(lang)
+	p.ListenAddr = strings.TrimSpace(r.FormValue("listen_addr"))
+	p.MetricsListenAddr = strings.TrimSpace(r.FormValue("metrics_listen_addr"))
+	p.GRPCListenAddr = strings.TrimSpace(r.FormValue("grpc_listen_addr"))
+	p.PrefixV4 = strings.TrimSpace(r.FormValue("prefix_v4"))
+	p.PrefixV6 = strings.TrimSpace(r.FormValue("prefix_v6"))
+
+	errs := validateNetwork(p, lang)
+	// 监听端口变化会影响 server_url 端口，这里一并校验。
+	for k, v := range validateDomain(p, lang) {
+		if k == "listen_addr" {
+			errs[k] = v
+		}
+	}
+	if len(errs) > 0 {
+		p.Errors = errs
+		p.Warnings = configWarnings(p, lang)
+		a.render(w, r, "settings", p)
+		return
+	}
+	next, err := a.hs.buildConfig(p, "network")
+	if err != nil {
+		p.Errors = map[string]string{"listen_addr": err.Error()}
+		a.render(w, r, "settings", p)
+		return
+	}
+	a.applySettings(w, r, p, next, "cfg.msg.networkSaved")
+}
+
+// settingsTLS 保存证书模式、ACME 参数或手动证书路径。
+func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	lang := langFrom(r)
+	p := a.hs.loadConfigPage(lang)
+	p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
+	p.ACMEEmail = strings.TrimSpace(r.FormValue("acme_email"))
+	p.ACMEURL = strings.TrimSpace(r.FormValue("acme_url"))
+	p.ChallengeType = strings.TrimSpace(r.FormValue("tls_letsencrypt_challenge_type"))
+	p.LEListen = strings.TrimSpace(r.FormValue("tls_letsencrypt_listen"))
+	p.LECacheDir = strings.TrimSpace(r.FormValue("tls_letsencrypt_cache_dir"))
+	p.CertPath = strings.TrimSpace(r.FormValue("tls_cert_path"))
+	p.KeyPath = strings.TrimSpace(r.FormValue("tls_key_path"))
+	host := strings.TrimSpace(r.FormValue("tls_letsencrypt_hostname"))
+
+	switch p.TLSMode {
+	case "letsencrypt":
+		p.LEHostname = host
+		p.CertPath, p.KeyPath = "", ""
+	case "manual":
+		p.LEHostname = ""
+	case "http":
+		p.LEHostname, p.CertPath, p.KeyPath = "", "", ""
+	}
+	if p.LECacheDir == "" {
+		p.LECacheDir = "/var/lib/headscale/cache"
+	}
+
+	if errs := validateTLS(p, lang); len(errs) > 0 {
+		// 保留用户输入用于回显（清空动作只在通过校验后生效）。
+		if p.TLSMode == "letsencrypt" {
+			p.LEHostname = host
+		}
+		p.Cert = inspectCert(&ConfigPage{CertPath: r.FormValue("tls_cert_path"), KeyPath: r.FormValue("tls_key_path"), LEHostname: host, LECacheDir: p.LECacheDir})
+		p.Errors = errs
+		a.render(w, r, "settings", p)
+		return
+	}
+	next, err := a.hs.buildConfig(p, "tls")
+	if err != nil {
+		p.Errors = map[string]string{"tls_mode": err.Error()}
+		a.render(w, r, "settings", p)
+		return
+	}
+	a.applySettings(w, r, p, next, "cfg.msg.tlsSaved")
+}
+
+func (a *App) applySettings(w http.ResponseWriter, r *http.Request, p *ConfigPage, next, successKey string) {
+	lang := langFrom(r)
+	restart := r.FormValue("apply_now") == "on"
+	bak, err := a.hs.ApplyConfig(next, restart, lang)
+	if err != nil {
+		p.Errors = map[string]string{"_form": err.Error()}
+		p.Warnings = configWarnings(p, lang)
+		fresh := a.hs.loadConfigPage(lang)
+		fresh.Errors = p.Errors
+		a.render(w, r, "settings", fresh)
+		return
+	}
+	msg := tr(lang, successKey)
+	if restart {
+		msg += tr(lang, "cfg.msg.applied")
+	} else {
+		msg += tr(lang, "cfg.msg.pendingRestart")
+	}
+	if bak != "" {
+		msg += tr(lang, "cfg.msg.backup", filepath.Base(bak))
+	}
+	a.redirectWithFlash(w, r, "/settings", msg)
+}
+
+// settingsRenew 手动触发 certbot 续期，成功后续期并重启 headscale。
+func (a *App) settingsRenew(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	out, err := certRenew(langFrom(r))
+	if err != nil {
+		a.redirectWithFlash(w, r, "/settings", err.Error())
+		return
+	}
+	if len(out) > 400 {
+		out = out[len(out)-400:]
+	}
+	a.redirectWithFlash(w, r, "/settings", tr(langFrom(r), "cfg.msg.renewed", strings.TrimSpace(out)))
+}
+
+// settingsRenewTimer 启停 certbot.timer 并设置每日检查时间。
+func (a *App) settingsRenewTimer(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	lang := langFrom(r)
+	enable := r.FormValue("enabled") == "on"
+	schedule := strings.TrimSpace(r.FormValue("schedule"))
+	if err := setRenewTimer(enable, schedule, lang); err != nil {
+		a.redirectWithFlash(w, r, "/settings", tr(lang, "cfg.msg.renewSaveFail", err.Error()))
+		return
+	}
+	a.redirectWithFlash(w, r, "/settings", tr(lang, "cfg.msg.renewSaved"))
 }

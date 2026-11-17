@@ -1,0 +1,243 @@
+{{define "settings"}}{{template "head" .}}
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-top">{{icon "server" 17}} {{t .Lang "cfg.label.service"}}</div>
+    <div class="stat-value">{{.Data.Service}}</div>
+    <span class="badge {{if eq .Data.Service "active"}}success{{else}}warning{{end}}">{{.Data.Service}}</span>
+  </div>
+  <div class="stat-card">
+    <div class="stat-top">{{icon "globe" 17}} {{t .Lang "cfg.label.currentURL"}}</div>
+    <div class="cfg-value">{{if .Data.ServerURL}}{{.Data.ServerURL}}{{else}}—{{end}}</div>
+    <span class="badge muted">{{.Data.ListenAddr}}</span>
+  </div>
+  <div class="stat-card">
+    <div class="stat-top">{{icon "lock" 17}} {{t .Lang "section.certStatus"}}</div>
+    {{if .Data.Cert.Valid}}
+      <div class="stat-value">{{t .Lang "cfg.cert.daysLeft" .Data.Cert.DaysLeft}}</div>
+      <span class="badge {{if gt .Data.Cert.DaysLeft 30}}success{{else if gt .Data.Cert.DaysLeft 7}}warning{{else}}danger{{end}}">{{.Data.Cert.NotAfter}}</span>
+    {{else}}
+      <div class="stat-value">—</div>
+      <span class="badge muted">{{t .Lang "cfg.cert.none"}}</span>
+    {{end}}
+  </div>
+  <div class="stat-card">
+    <div class="stat-top">{{icon "refresh" 17}} {{t .Lang "cfg.renew.mode"}}</div>
+    <div class="cfg-value">{{if eq .Data.Renew.Mode "acme"}}{{t .Lang "cfg.renew.acme"}}{{else if eq .Data.Renew.Mode "certbot"}}{{t .Lang "cfg.renew.certbot"}}{{else if eq .Data.Renew.Mode "manual"}}{{t .Lang "cfg.renew.manual"}}{{else}}{{t .Lang "cfg.renew.none"}}{{end}}</div>
+    {{if .Data.Renew.CertbotInstalled}}<span class="badge {{if eq .Data.Renew.TimerActive "active"}}success{{else}}muted{{end}}">certbot.timer {{.Data.Renew.TimerActive}}</span>{{end}}
+  </div>
+</div>
+
+{{if .Data.Errors}}<div class="flash error">{{icon "x" 17}}<span>{{t .Lang "cfg.msg.validation" (len .Data.Errors)}}</span></div>{{end}}
+{{with index .Data.Errors "_form"}}<div class="flash error">{{icon "x" 17}}<span>{{.}}</span></div>{{end}}
+{{range .Data.Warnings}}<div class="notice warn">{{icon "clock" 17}}<span>{{.}}</span></div>{{end}}
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "file" 18}} {{t .Lang "cfg.section.overview"}}</h2><span class="badge muted small">{{.Data.ConfigPath}}</span></div>
+  <div class="kv">
+    <div class="kv-row"><span>{{t .Lang "cfg.label.currentURL"}}</span><b>{{if .Data.ServerURL}}{{.Data.ServerURL}}{{else}}—{{end}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "cfg.label.currentListen"}}</span><b>{{if .Data.ListenAddr}}{{.Data.ListenAddr}}{{else}}—{{end}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "cfg.label.certMode"}}</span><b>{{if eq .Data.TLSMode "letsencrypt"}}{{t .Lang "cfg.mode.le"}}{{else if eq .Data.TLSMode "manual"}}{{t .Lang "cfg.mode.manual"}}{{else}}{{t .Lang "cfg.mode.http"}}{{end}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "cfg.cert.notAfter"}}</span><b>{{if .Data.Cert.Valid}}{{.Data.Cert.NotAfter}}{{else}}—{{end}}</b></div>
+  </div>
+</section>
+
+<section class="card" id="domain">
+  <div class="card-head"><h2 class="card-title">{{icon "network" 18}} {{t .Lang "cfg.section.domain"}}</h2></div>
+  <form method="post" action="/settings/domain" class="form-stack">
+    {{template "csrf" .}}
+    <div class="form-grid">
+      <div class="form-group span-2">
+        <label class="form-label" for="server_url">{{t .Lang "cfg.field.serverURL"}}</label>
+        <input class="form-input{{if index .Data.Errors "server_url"}} invalid{{end}}" id="server_url" name="server_url" value="{{.Data.ServerURL}}" required placeholder="https://hs.example.com">
+        {{with index .Data.Errors "server_url"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="base_domain">{{t .Lang "cfg.field.baseDomain"}}</label>
+        <input class="form-input{{if index .Data.Errors "base_domain"}} invalid{{end}}" id="base_domain" name="base_domain" value="{{.Data.BaseDomain}}" required placeholder="hs.example.com">
+        {{with index .Data.Errors "base_domain"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+      <div class="form-group">
+        <label class="check-label"><input class="form-checkbox" type="checkbox" name="magic_dns" {{if .Data.MagicDNS}}checked{{end}}> {{t .Lang "cfg.field.magicDNS"}}</label>
+      </div>
+    </div>
+    <p class="hint">{{t .Lang "cfg.hint.serverURL"}}<br>{{t .Lang "cfg.hint.baseDomain"}}</p>
+    <div class="form-actions">
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
+      <button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveDomain"}}</button>
+    </div>
+  </form>
+</section>
+
+<section class="card" id="network">
+  <div class="card-head"><h2 class="card-title">{{icon "server" 18}} {{t .Lang "cfg.section.network"}}</h2></div>
+  <form method="post" action="/settings/network" class="form-stack">
+    {{template "csrf" .}}
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="listen_addr">{{t .Lang "cfg.field.listenAddr"}}</label>
+        <input class="form-input{{if index .Data.Errors "listen_addr"}} invalid{{end}}" id="listen_addr" name="listen_addr" value="{{.Data.ListenAddr}}" required placeholder="0.0.0.0:8080">
+        {{with index .Data.Errors "listen_addr"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="grpc_listen_addr">{{t .Lang "cfg.field.grpcAddr"}}</label>
+        <input class="form-input{{if index .Data.Errors "grpc_listen_addr"}} invalid{{end}}" id="grpc_listen_addr" name="grpc_listen_addr" value="{{.Data.GRPCListenAddr}}" placeholder="127.0.0.1:50443">
+        {{with index .Data.Errors "grpc_listen_addr"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="metrics_listen_addr">{{t .Lang "cfg.field.metricsAddr"}}</label>
+        <input class="form-input{{if index .Data.Errors "metrics_listen_addr"}} invalid{{end}}" id="metrics_listen_addr" name="metrics_listen_addr" value="{{.Data.MetricsListenAddr}}" placeholder="127.0.0.1:9090">
+        {{with index .Data.Errors "metrics_listen_addr"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="prefix_v4">{{t .Lang "cfg.field.prefixV4"}}</label>
+        <input class="form-input{{if index .Data.Errors "prefix_v4"}} invalid{{end}}" id="prefix_v4" name="prefix_v4" value="{{.Data.PrefixV4}}" required placeholder="100.64.0.0/10">
+        {{with index .Data.Errors "prefix_v4"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="prefix_v6">{{t .Lang "cfg.field.prefixV6"}}</label>
+        <input class="form-input{{if index .Data.Errors "prefix_v6"}} invalid{{end}}" id="prefix_v6" name="prefix_v6" value="{{.Data.PrefixV6}}" placeholder="fd7a:115c:a1e0::/48">
+        {{with index .Data.Errors "prefix_v6"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+    </div>
+    <p class="hint">{{t .Lang "cfg.hint.listenAddr"}}<br>{{t .Lang "cfg.hint.metrics"}}<br>{{t .Lang "cfg.hint.prefix"}}</p>
+    <div class="form-actions">
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
+      <button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveNetwork"}}</button>
+    </div>
+  </form>
+</section>
+
+<section class="card" id="tls">
+  <div class="card-head"><h2 class="card-title">{{icon "lock" 18}} {{t .Lang "cfg.section.tls"}}</h2>
+    {{if .Data.Cert.Valid}}<span class="badge {{if .Data.Cert.KeyMatch}}success{{else}}danger{{end}}">{{if .Data.Cert.KeyMatch}}{{t .Lang "cfg.cert.keyMatch"}}{{else}}{{t .Lang "cfg.cert.keyMismatch"}}{{end}}</span>{{end}}
+  </div>
+
+  <div class="cert-panel">
+    {{if .Data.Cert.Valid}}
+      <div class="kv">
+        <div class="kv-row"><span>{{t .Lang "cfg.cert.source"}}</span><b>{{if eq .Data.Cert.Source "acme"}}{{t .Lang "cfg.src.acme"}}{{else if eq .Data.Cert.Source "manual"}}{{t .Lang "cfg.src.manual"}}{{else}}{{t .Lang "cfg.src.none"}}{{end}}</b></div>
+        <div class="kv-row"><span>{{t .Lang "cfg.cert.subject"}}</span><b>{{.Data.Cert.Subject}}</b></div>
+        <div class="kv-row"><span>{{t .Lang "cfg.cert.issuer"}}</span><b>{{.Data.Cert.Issuer}}</b></div>
+        <div class="kv-row"><span>{{t .Lang "cfg.cert.notAfter"}}</span><b>{{.Data.Cert.NotAfter}} {{if lt .Data.Cert.DaysLeft 0}}<span class="badge danger">{{t .Lang "cfg.cert.expired" .Data.Cert.DaysLeft}}</span>{{else}}<span class="badge {{if gt .Data.Cert.DaysLeft 30}}success{{else}}warning{{end}}">{{t .Lang "cfg.cert.daysLeft" .Data.Cert.DaysLeft}}</span>{{end}}</b></div>
+        <div class="kv-row"><span>{{t .Lang "cfg.cert.san"}}</span><b>{{if .Data.Cert.SAN}}{{.Data.Cert.SAN}}{{else}}—{{end}}</b></div>
+        <div class="kv-row"><span>{{t .Lang "cfg.cert.path"}}</span><b class="mono">{{.Data.Cert.Path}}</b></div>
+      </div>
+    {{else}}
+      <div class="notice">{{icon "lock" 17}}<span>{{if .Data.Cert.Problem}}{{t .Lang "cfg.cert.problem"}}: {{.Data.Cert.Problem}}{{else}}{{t .Lang "cfg.cert.none"}}{{end}}</span></div>
+    {{end}}
+  </div>
+
+  <form method="post" action="/settings/tls" class="form-stack">
+    {{template "csrf" .}}
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="tls_mode">{{t .Lang "cfg.field.tlsMode"}}</label>
+        <select class="form-input{{if index .Data.Errors "tls_mode"}} invalid{{end}}" id="tls_mode" name="tls_mode">
+          <option value="letsencrypt" {{if eq .Data.TLSMode "letsencrypt"}}selected{{end}}>{{t .Lang "cfg.mode.le"}}</option>
+          <option value="manual" {{if eq .Data.TLSMode "manual"}}selected{{end}}>{{t .Lang "cfg.mode.manual"}}</option>
+          <option value="http" {{if eq .Data.TLSMode "http"}}selected{{end}}>{{t .Lang "cfg.mode.http"}}</option>
+        </select>
+        {{with index .Data.Errors "tls_mode"}}<span class="field-error">{{.}}</span>{{end}}
+      </div>
+    </div>
+
+    <div class="tls-block" data-tls-mode="letsencrypt">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="tls_letsencrypt_hostname">{{t .Lang "cfg.field.leHost"}}</label>
+          <input class="form-input{{if index .Data.Errors "tls_letsencrypt_hostname"}} invalid{{end}}" id="tls_letsencrypt_hostname" name="tls_letsencrypt_hostname" value="{{.Data.LEHostname}}" placeholder="hs.example.com">
+          {{with index .Data.Errors "tls_letsencrypt_hostname"}}<span class="field-error">{{.}}</span>{{end}}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="acme_email">{{t .Lang "cfg.field.acmeEmail"}}</label>
+          <input class="form-input{{if index .Data.Errors "acme_email"}} invalid{{end}}" id="acme_email" name="acme_email" value="{{.Data.ACMEEmail}}" placeholder="admin@example.com">
+          {{with index .Data.Errors "acme_email"}}<span class="field-error">{{.}}</span>{{end}}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="tls_letsencrypt_challenge_type">{{t .Lang "cfg.field.challenge"}}</label>
+          <select class="form-input{{if index .Data.Errors "tls_letsencrypt_challenge_type"}} invalid{{end}}" id="tls_letsencrypt_challenge_type" name="tls_letsencrypt_challenge_type">
+            <option value="HTTP-01" {{if eq .Data.ChallengeType "HTTP-01"}}selected{{end}}>HTTP-01</option>
+            <option value="TLS-ALPN-01" {{if eq .Data.ChallengeType "TLS-ALPN-01"}}selected{{end}}>TLS-ALPN-01</option>
+          </select>
+          {{with index .Data.Errors "tls_letsencrypt_challenge_type"}}<span class="field-error">{{.}}</span>{{end}}
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="tls_letsencrypt_listen">{{t .Lang "cfg.field.leListen"}}</label>
+          <input class="form-input{{if index .Data.Errors "tls_letsencrypt_listen"}} invalid{{end}}" id="tls_letsencrypt_listen" name="tls_letsencrypt_listen" value="{{.Data.LEListen}}" placeholder=":http">
+          {{with index .Data.Errors "tls_letsencrypt_listen"}}<span class="field-error">{{.}}</span>{{end}}
+        </div>
+        <div class="form-group span-2">
+          <label class="form-label" for="tls_letsencrypt_cache_dir">{{t .Lang "cfg.field.cacheDir"}}</label>
+          <input class="form-input" id="tls_letsencrypt_cache_dir" name="tls_letsencrypt_cache_dir" value="{{.Data.LECacheDir}}" placeholder="/var/lib/headscale/cache">
+        </div>
+      </div>
+      <p class="hint">{{t .Lang "cfg.hint.leHost"}}<br>{{t .Lang "cfg.hint.acmeEmail"}}</p>
+    </div>
+
+    <div class="tls-block" data-tls-mode="manual">
+      <div class="form-grid">
+        <div class="form-group span-2">
+          <label class="form-label" for="tls_cert_path">{{t .Lang "cfg.field.certPath"}}</label>
+          <input class="form-input{{if index .Data.Errors "tls_cert_path"}} invalid{{end}}" id="tls_cert_path" name="tls_cert_path" value="{{.Data.CertPath}}" placeholder="/etc/letsencrypt/live/hs.example.com/fullchain.pem">
+          {{with index .Data.Errors "tls_cert_path"}}<span class="field-error">{{.}}</span>{{end}}
+        </div>
+        <div class="form-group span-2">
+          <label class="form-label" for="tls_key_path">{{t .Lang "cfg.field.keyPath"}}</label>
+          <input class="form-input{{if index .Data.Errors "tls_key_path"}} invalid{{end}}" id="tls_key_path" name="tls_key_path" value="{{.Data.KeyPath}}" placeholder="/etc/letsencrypt/live/hs.example.com/privkey.pem">
+          {{with index .Data.Errors "tls_key_path"}}<span class="field-error">{{.}}</span>{{end}}
+        </div>
+      </div>
+      <p class="hint">{{t .Lang "cfg.hint.manual"}}</p>
+    </div>
+
+    <div class="tls-block" data-tls-mode="http">
+      <div class="notice warn">{{icon "x" 17}}<span>{{t .Lang "cfg.err.httpsNoCert"}}</span></div>
+    </div>
+
+    <p class="hint">{{t .Lang "cfg.hint.tlsMode"}}<br>{{t .Lang "cfg.hint.apply"}}</p>
+    <div class="form-actions">
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
+      <button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveTLS"}}</button>
+    </div>
+  </form>
+</section>
+
+<section class="card" id="renew">
+  <div class="card-head"><h2 class="card-title">{{icon "refresh" 18}} {{t .Lang "cfg.section.renew"}}</h2></div>
+
+  {{if .Data.Renew.CertbotInstalled}}
+    <div class="kv">
+      <div class="kv-row"><span>{{t .Lang "cfg.renew.mode"}}</span><b>{{if eq .Data.Renew.Mode "acme"}}{{t .Lang "cfg.renew.acme"}}{{else if eq .Data.Renew.Mode "manual"}}{{t .Lang "cfg.renew.manual"}}{{else}}{{t .Lang "cfg.renew.certbot"}}{{end}}</b></div>
+      <div class="kv-row"><span>{{t .Lang "cfg.renew.timer"}}</span><b>{{.Data.Renew.TimerEnabled}} / {{.Data.Renew.TimerActive}}</b></div>
+      <div class="kv-row"><span>{{t .Lang "cfg.renew.next"}}</span><b>{{.Data.Renew.NextRun}}</b></div>
+      <div class="kv-row"><span>{{t .Lang "cfg.renew.last"}}</span><b>{{.Data.Renew.LastRun}}</b></div>
+      <div class="kv-row"><span>{{t .Lang "cfg.renew.certName"}}</span><b>{{if .Data.Renew.CertName}}{{.Data.Renew.CertName}}{{else}}—{{end}}</b></div>
+    </div>
+
+    {{if eq .Data.Renew.Mode "acme"}}
+      <div class="notice">{{icon "check" 17}}<span>{{t .Lang "cfg.renew.autoNote"}}</span></div>
+    {{else}}
+      <form method="post" action="/settings/renew-timer" class="form-stack">
+        {{template "csrf" .}}
+        <div class="form-grid">
+          <div class="form-group"><label class="check-label"><input class="form-checkbox" type="checkbox" name="enabled" {{if eq .Data.Renew.TimerActive "active"}}checked{{end}}> {{t .Lang "cfg.renew.enable"}}</label></div>
+          <div class="form-group">
+            <label class="form-label" for="schedule">{{t .Lang "cfg.field.schedule"}}</label>
+            <input class="form-input" id="schedule" name="schedule" value="{{.Data.Renew.Schedule}}" placeholder="03:17" pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveRenew"}}</button>
+        </div>
+      </form>
+      <form method="post" action="/settings/renew" onsubmit="return confirm('{{t .Lang "confirm.restart"}}')">
+        {{template "csrf" .}}
+        <div class="form-actions"><button class="btn btn-secondary" type="submit">{{icon "refresh" 15}} {{t .Lang "cfg.renew.renewNow"}}</button></div>
+      </form>
+    {{end}}
+  {{else}}
+    <div class="notice warn">{{icon "x" 17}}<span>{{t .Lang "cfg.renew.noCertbot"}}</span></div>
+    {{if eq .Data.Renew.Mode "acme"}}<div class="notice">{{icon "check" 17}}<span>{{t .Lang "cfg.renew.autoNote"}}</span></div>{{end}}
+  {{end}}
+</section>
+{{template "foot" .}}{{end}}

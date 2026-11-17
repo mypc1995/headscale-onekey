@@ -24,6 +24,7 @@
     <div class="nav-section">
       <div class="nav-section-title">{{t .Lang "nav.system"}}</div>
       <a href="/network" class="nav-link{{if eq .Active "network"}} active{{end}}">{{icon "network" 18}}<span>{{t .Lang "nav.network"}}</span></a>
+      <a href="/settings" class="nav-link{{if eq .Active "settings"}} active{{end}}">{{icon "server" 18}}<span>{{t .Lang "nav.settings"}}</span></a>
       <a href="/ops" class="nav-link{{if eq .Active "ops"}} active{{end}}">{{icon "activity" 18}}<span>{{t .Lang "nav.ops"}}</span></a>
       <a href="/admins" class="nav-link{{if eq .Active "admins"}} active{{end}}">{{icon "shield" 18}}<span>{{t .Lang "nav.admins"}}</span></a>
     </div>

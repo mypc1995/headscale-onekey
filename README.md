@@ -30,7 +30,7 @@
 | `deploy-headscale-admin.sh` | 全量管理界面一键部署（默认 3001） |
 | `headscale-admin/` | 全量管理界面 Go 源码、模板与静态资源 |
 | `test-headcontrol-patch.sh` | 汉化补丁、Basic Auth 应用与编译验证 |
-| `test-headscale-admin.sh` | 全量管理界面编译、登录、双语、主题、网速与 CSRF 验证 |
+| `test-headscale-admin.sh` | 全量管理界面编译、登录、双语、主题、网速、配置校验与 CSRF 验证 |
 
 ## 快速开始
 
@@ -127,6 +127,58 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 - 网络与策略：ACL 策略编辑、DNS/MagicDNS、DERP 开关、完整配置编辑；保存前自动备份并做 `configtest` 校验。
 - 运维与监控：服务状态、版本、证书到期、最近日志、重启服务，以及每 3 秒刷新的实时网速（读取 `/proc/net/dev`，含上下行速率、累计流量、各网卡明细与近期曲线；非 Linux 自动降级为不可用提示）。
 - 管理员：管理员增删改、角色（admin/readonly）、修改密码。
+- 配置管理：域名、IP 与监听、SSL 证书、证书自动续期集中在网页端，见下节。
+
+#### 配置管理页（`/settings`）
+
+把 Headscale 常用配置集中到网页端，避免手改 YAML。页面分四块，每块独立保存、互不影响。
+
+**域名与接入**
+
+| 字段 | 配置键 | 校验规则 |
+| --- | --- | --- |
+| 对外访问地址 | `server_url` | 必填；只允许 `http://` / `https://`；不能带路径、参数、锚点或结尾 `/`；协议必须与证书模式匹配 |
+| MagicDNS 根域 | `dns.base_domain` | 必填；至少两级标签；不能是纯 IP；不能与 `server_url` 域名相同 |
+| 启用 MagicDNS | `dns.magic_dns` | 开关 |
+
+**IP 与监听**
+
+| 字段 | 配置键 | 校验规则 |
+| --- | --- | --- |
+| HTTP 监听地址 | `listen_addr` | 必填；`IP:端口`，端口 1–65535 |
+| 指标监听地址 | `metrics_listen_addr` | 可留空；格式同上 |
+| gRPC 监听地址 | `grpc_listen_addr` | 必填；格式同上 |
+| 客户端 IPv4 段 | `prefixes.v4` | 必填；CIDR 且必须位于 `100.64.0.0/10` 内 |
+| 客户端 IPv6 段 | `prefixes.v6` | 可留空；CIDR，掩码不能大于 /64 |
+
+同一表单内端口重复会被直接拦截。`server_url` 端口与监听端口不一致时给出警告，避免改端口时两边互相锁死。
+
+**SSL 证书**
+
+三种模式，切换时会自动清空不适用的键：
+
+- **内置 ACME**：证书域名（必填 FQDN）、ACME 邮箱（可选，填了必须合法）、校验方式（HTTP-01 / TLS-ALPN-01）、HTTP-01 监听地址、证书缓存目录。
+- **手动证书**：证书与私钥必须是绝对路径且文件存在，保存时用 `tls.LoadX509KeyPair` 校验两者配对。
+- **仅 HTTP**：清空 ACME 域名与证书路径。
+
+页面顶部解析当前证书，显示来源（ACME 缓存 / 手动）、CN、颁发者、生效与到期时间、剩余天数、SAN、私钥是否匹配。到期 30 天内或私钥不匹配会显示警告。
+
+**证书自动更新**
+
+- 内置 ACME：显示由 headscale 进程自动续期，不需要额外定时任务。
+- certbot：显示 `certbot.timer` 的启用与运行状态、上次/下次执行时间、证书名；可启停定时器、设置每日检查时间（写入 `certbot.timer.d/override.conf` 后 `daemon-reload`），也可立即续期（执行 `certbot renew` 后重启 headscale）。
+- 未安装 certbot 时显示安装提示，不展示不可用的按钮。
+
+**保存与应用流程**
+
+1. 服务端逐字段校验；失败时原样回显并标红出错字段，不写任何文件。
+2. 基于当前 YAML 生成候选配置，写入 `/etc/headscale/.config-candidate.yaml`。
+3. 执行 `headscale configtest -c` 校验；失败则删除候选文件并返回完整错误，原配置保持不动。
+4. 备份为 `config.yaml.bak.<时间戳>`，再原子替换正式配置。
+5. 勾选「保存后立即重启」时执行 `systemctl restart headscale`，等待进程 active 且监听端口可连接；失败自动回滚到备份并再次重启。
+6. 成功后页面顶部提示结果与备份文件名。
+
+修改监听端口或 `server_url` 会短暂中断客户端连接；切换 HTTP/HTTPS 需要两侧配置配套修改，页面会在不一致时给出警告。
 
 界面支持中英文切换：顶部地球图标可切换语言，选择保存在 Cookie 中，登录页也能切换。主题下拉提供 14 套配色（浅色、深色、赛博朋克、海洋、日落、森林、午夜、德古拉、北欧、玫瑰、咖啡、终端、柔和、合成波），选择保存在浏览器本地，界面采用暖色底、粗边框、硬阴影的新粗野主义风格，图标全部内联，不依赖外部 CDN。
 
@@ -139,7 +191,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
 bash test-headcontrol-patch.sh    # 验证汉化补丁、Basic Auth 与 Go 编译（需 git/go/gcc/curl/openssl）
-bash test-headscale-admin.sh      # 验证全量管理界面编译、登录、双语、主题、网速与 CSRF（需 go/curl）
+bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、配置校验与 CSRF（需 go/curl）
 ```
 
 ## 安全提示

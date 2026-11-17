@@ -125,6 +125,7 @@ func main() {
 	p.HandleFunc("GET /users", a.usersPage)
 	p.HandleFunc("GET /keys", a.keysPage)
 	p.HandleFunc("GET /network", a.networkPage)
+	p.HandleFunc("GET /settings", a.settingsPage)
 	p.HandleFunc("GET /ops", a.opsPage)
 	p.HandleFunc("GET /admins", a.adminsPage)
 	p.HandleFunc("GET /api/netmon", a.netmonAPI)
@@ -173,7 +174,7 @@ func joinAny(v any) string {
 
 var pageTitles = map[string]string{
 	"dashboard": "title.dashboard", "nodes": "title.nodes", "users": "title.users", "keys": "title.keys",
-	"network": "title.network", "ops": "title.ops", "admins": "title.admins",
+	"network": "title.network", "settings": "title.settings", "ops": "title.ops", "admins": "title.admins",
 }
 
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, data any) {
@@ -350,6 +351,11 @@ func (a *App) registerActions(p *http.ServeMux) {
 	p.HandleFunc("POST /network/config", a.saveConfig)
 	p.HandleFunc("POST /network/dns", a.saveDNS)
 	p.HandleFunc("POST /network/derp", a.saveDERP)
+	p.HandleFunc("POST /settings/domain", a.settingsDomain)
+	p.HandleFunc("POST /settings/network", a.settingsNetwork)
+	p.HandleFunc("POST /settings/tls", a.settingsTLS)
+	p.HandleFunc("POST /settings/renew", a.settingsRenew)
+	p.HandleFunc("POST /settings/renew-timer", a.settingsRenewTimer)
 	p.HandleFunc("POST /ops/restart", a.restartHeadscale)
 	p.HandleFunc("POST /admins/create", a.adminCreate)
 	p.HandleFunc("POST /admins/delete", a.adminDelete)
