@@ -488,4 +488,3 @@ func (s *AuthStore) Ping() error {
 	defer cancel()
 	return s.DB.PingContext(ctx)
 }
-

@@ -39,10 +39,10 @@ func TestCheckPastedPair(t *testing.T) {
 	_, keyB := makePair(t, "hs.example.com")
 
 	cases := []struct {
-		name       string
-		cert, key  string
-		wantField  string
-		wantCode   string
+		name      string
+		cert, key string
+		wantField string
+		wantCode  string
 	}{
 		{"匹配的证书与私钥", certA, keyA, "", ""},
 		{"只粘贴了证书", certA, "", "cert_pem", "cfg.err.pasteBoth"},

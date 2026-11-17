@@ -113,6 +113,26 @@ done
 curl -s -b "$JAR" "$BASE/ops" | grep -c 'section.netmon\|实时网速' >/dev/null && ok "运维页包含实时网速面板" || fail "运维页缺少网速面板"
 curl -s -b "$JAR" "$BASE/ops" | grep -c 'spark-down' >/dev/null && ok "网速曲线元素存在" || fail "网速曲线缺失"
 curl -s -b "$JAR" "$BASE/api/netmon" | grep -c '"ifaces"' >/dev/null && ok "网速数据接口可用" || fail "网速数据接口异常"
+
+info "验证本机资源与节点监控"
+curl -s -b "$JAR" "$BASE/ops" -o "$TMPDIR/ops.html"
+for kw in '本机资源' '节点监控' 'CPU 使用率' '内存使用率' '节点总数' '告警'; do
+  grep -q "$kw" "$TMPDIR/ops.html" && ok "运维页包含「$kw」" || fail "运维页缺少「$kw」"
+done
+grep -q 'id="host-cpu-bar"' "$TMPDIR/ops.html" && ok "本机 CPU 进度条存在" || fail "缺少 CPU 进度条"
+grep -q 'id="host-mem-bar"' "$TMPDIR/ops.html" && ok "本机内存进度条存在" || fail "缺少内存进度条"
+grep -q 'id="node-rows"' "$TMPDIR/ops.html" && ok "节点监控表格存在" || fail "缺少节点监控表格"
+curl -s -b "$JAR" "$BASE/api/monitor" -o "$TMPDIR/monitor.json"
+for kw in '"host"' '"cpu_percent"' '"mem_percent"' '"nodes"' '"thresholds"' '"alerts"'; do
+  grep -q "$kw" "$TMPDIR/monitor.json" && ok "监控接口包含 $kw" || fail "监控接口缺少 $kw"
+done
+if [[ "$(uname -s)" == "Linux" ]]; then
+  grep -q '"available":true' "$TMPDIR/monitor.json" && ok "本机资源采集可用" || fail "本机资源采集不可用"
+  grep -q '"cpu_count":[1-9]' "$TMPDIR/monitor.json" && ok "CPU 核数已采集" || fail "CPU 核数缺失"
+  grep -q '"load1"' "$TMPDIR/monitor.json" && ok "系统负载已采集" || fail "系统负载缺失"
+else
+  info "非 Linux 环境没有 /proc，跳过本机资源采集断言"
+fi
 curl -s -b "$JAR" "$BASE/" | grep -c 'id="theme-dropdown"' >/dev/null && ok "主题切换控件存在" || fail "主题切换控件缺失"
 
 info "验证 Headscale 配置页"
@@ -169,6 +189,8 @@ info "验证中英文切换"
 curl -sL -b "$JAR" -c "$JAR" "$BASE/lang?lang=en&next=/" -o /dev/null
 curl -s -b "$JAR" "$BASE/" | grep -c 'Dashboard' >/dev/null && ok "英文界面标题生效" || fail "英文界面未生效"
 curl -s -b "$JAR" "$BASE/ops" | grep -c 'Live network speed' >/dev/null && ok "英文网速文案生效" || fail "英文网速文案缺失"
+curl -s -b "$JAR" "$BASE/ops" | grep -c 'Host resources' >/dev/null && ok "英文本机资源文案生效" || fail "英文本机资源文案缺失"
+curl -s -b "$JAR" "$BASE/ops" | grep -c 'Node monitoring' >/dev/null && ok "英文节点监控文案生效" || fail "英文节点监控文案缺失"
 curl -s -b "$JAR" "$BASE/users" | grep -c 'New user' >/dev/null && ok "英文表单文案生效" || fail "英文表单文案缺失"
 curl -s -b "$JAR" "$BASE/settings" | grep -c 'Certificate auto-renewal' >/dev/null && ok "英文配置页生效" || fail "英文配置页缺失"
 curl -sL -b "$JAR" -c "$JAR" "$BASE/lang?lang=zh&next=/" -o /dev/null

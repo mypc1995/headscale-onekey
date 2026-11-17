@@ -35,12 +35,26 @@ type networkData struct {
 
 type opsData struct {
 	Net        NetSnapshot
+	Host       hostView
+	Nodes      NodeSnapshot
+	Alerts     []MonitorAlert
+	Thresholds AlertThresholds
 	Service    string
 	Version    string
 	Cert       string
 	Logs       string
 	ConfigPath string
 	PolicyPath string
+}
+
+// monitorResponse 是 /api/monitor 的返回结构：一次请求带回本机资源、
+// 节点状态和告警，前端轮询时不需要分别请求多个接口。
+type monitorResponse struct {
+	Host       hostView        `json:"host"`
+	Nodes      NodeSnapshot    `json:"nodes"`
+	Alerts     []MonitorAlert  `json:"alerts"`
+	Thresholds AlertThresholds `json:"thresholds"`
+	Updated    string          `json:"updated"`
 }
 
 type adminsData struct {
@@ -102,9 +116,24 @@ func (a *App) networkPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
-	d := opsData{Net: a.net.Snapshot(), Service: tr(langFrom(r), "state.unknown"), Version: a.hs.Version(), Cert: certExpiry(), Logs: journal(80), ConfigPath: a.hs.Config, PolicyPath: a.hs.PolicyPath(langFrom(r))}
-	if out, err := systemctl("is-active", "headscale"); err == nil {
-		d.Service = strings.TrimSpace(out)
+	lang := langFrom(r)
+	hostSnap := a.host.Snapshot()
+	nodeSnap := a.nodes.Snapshot()
+	d := opsData{
+		Net:        a.net.Snapshot(),
+		Host:       newHostView(hostSnap, lang),
+		Nodes:      newNodesView(nodeSnap, lang),
+		Thresholds: a.thresholds,
+		Service:    nodeSnap.Service,
+		Version:    a.hs.Version(),
+		Cert:       certExpiry(),
+		Logs:       journal(80),
+		ConfigPath: a.hs.Config,
+		PolicyPath: a.hs.PolicyPath(lang),
+	}
+	d.Alerts = evaluateAlerts(alertInput{Host: hostSnap, Nodes: nodeSnap, Lang: lang}, a.thresholds)
+	if d.Service == "" {
+		d.Service = tr(lang, "state.unknown")
 	}
 	a.render(w, r, "ops", d)
 }
@@ -422,6 +451,8 @@ func (a *App) restartHeadscale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := systemctl("restart", "headscale")
+	// 立即刷新一次，避免页面沿用重启前的服务状态与节点快照。
+	a.nodes.sample()
 	if err != nil {
 		a.redirectWithFlash(w, r, "/ops", tr(langFrom(r), "msg.restartFail", err.Error(), out))
 		return
@@ -496,6 +527,23 @@ func (a *App) passwordChange(w http.ResponseWriter, r *http.Request) {
 func (a *App) netmonAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(a.net.Snapshot())
+}
+
+// monitorAPI 返回本机资源、节点状态与当前告警，供运维页每 5 秒轮询。
+func (a *App) monitorAPI(w http.ResponseWriter, r *http.Request) {
+	lang := langFrom(r)
+	host := a.host.Snapshot()
+	nodes := a.nodes.Snapshot()
+	resp := monitorResponse{
+		Host:       newHostView(host, lang),
+		Nodes:      newNodesView(nodes, lang),
+		Alerts:     evaluateAlerts(alertInput{Host: host, Nodes: nodes, Lang: lang}, a.thresholds),
+		Thresholds: a.thresholds,
+		Updated:    nodes.Updated,
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // ---------- Headscale 配置管理 ----------

@@ -148,3 +148,183 @@
   sel.addEventListener('change', sync);
   sync();
 })();
+
+// 运维页：本机资源、节点状态与告警。数据由 /api/monitor 每 5 秒下发，
+// 节点列表本身在服务端每 15 秒采样一次，这里只负责渲染。
+(function () {
+  var root = document.getElementById('monitor');
+  if (!root) return;
+  var isEn = document.documentElement.lang.indexOf('en') === 0;
+  var cpuThreshold = parseFloat(root.getAttribute('data-cpu')) || 85;
+  var memThreshold = parseFloat(root.getAttribute('data-mem')) || 90;
+  var rows = document.getElementById('node-rows');
+  var routesLabel = rows ? (rows.getAttribute('data-routes') || (isEn ? 'Routes' : '路由')) : '';
+
+  function setText(id, v) {
+    var el = document.getElementById(id);
+    if (el && v !== undefined && v !== null) el.textContent = v;
+  }
+  function pct(v) { return Math.round(v) + '%'; }
+  function level(v, th) { return v >= 97 ? 'danger' : v >= th ? 'warn' : ''; }
+  function bar(id, v, th) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.width = Math.max(0, Math.min(100, v)) + '%';
+    el.className = level(v, th);
+  }
+  function spark(id, vals, max) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (!vals || !vals.length) { el.setAttribute('points', ''); return; }
+    var w = 600, h = 90, step = vals.length > 1 ? w / (vals.length - 1) : w;
+    el.setAttribute('points', vals.map(function (v, i) {
+      return (i * step).toFixed(1) + ',' + (h - Math.min(1, v / max) * h * 0.92).toFixed(1);
+    }).join(' '));
+  }
+
+  function renderHost(h, th) {
+    if (!h || !h.available) return;
+    setText('host-cpu', pct(h.cpu_percent));
+    setText('host-mem', pct(h.mem_percent));
+    bar('host-cpu-bar', h.cpu_percent, (th && th.cpu) || cpuThreshold);
+    bar('host-mem-bar', h.mem_percent, (th && th.mem) || memThreshold);
+    var hist = h.history || [];
+    spark('host-spark-cpu', hist.map(function (p) { return p.cpu; }), 100);
+    spark('host-spark-mem', hist.map(function (p) { return p.mem; }), 100);
+    setText('host-load', h.load_text);
+    setText('host-mem-text', h.mem_detail_text);
+    setText('host-uptime', h.uptime_text);
+    var upd = document.getElementById('host-updated');
+    if (upd) {
+      var tpl = upd.getAttribute('data-tpl') || '__T__';
+      upd.textContent = tpl.replace('__T__', h.updated);
+    }
+  }
+
+  function cell(text, cls) {
+    var td = document.createElement('td');
+    if (cls) td.className = cls;
+    if (text !== undefined && text !== null) td.textContent = text;
+    return td;
+  }
+  function nodeRow(n) {
+    var tr = document.createElement('tr');
+    var name = cell(null, 'node-name');
+    var b = document.createElement('b');
+    b.textContent = n.name || ('#' + n.id);
+    name.appendChild(b);
+    var id = document.createElement('div');
+    id.className = 'muted small';
+    id.textContent = '#' + n.id;
+    name.appendChild(id);
+    tr.appendChild(name);
+
+    tr.appendChild(cell(n.user || '—', 'small'));
+    tr.appendChild(cell(n.ips && n.ips.length ? n.ips.join(', ') : '—', 'small mono nowrap'));
+
+    var status = cell(null);
+    var badge = document.createElement('span');
+    badge.className = 'badge ' + (n.state === 'online' ? 'success' : n.state === 'expired' ? 'danger' : 'muted');
+    if (n.state === 'online') {
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      badge.appendChild(dot);
+    }
+    badge.appendChild(document.createTextNode(n.state_text || n.state));
+    status.appendChild(badge);
+    tr.appendChild(status);
+
+    var seen = cell(n.last_seen_text, 'small node-time');
+    var abs = document.createElement('div');
+    abs.className = 'muted';
+    abs.textContent = n.last_seen_abs;
+    seen.appendChild(abs);
+    tr.appendChild(seen);
+
+    var client = cell(n.version || '—', 'small node-client');
+    var os = document.createElement('div');
+    os.className = 'muted';
+    os.textContent = n.os_text + ' · ' + n.register_text;
+    client.appendChild(os);
+    tr.appendChild(client);
+
+    tr.appendChild(cell(n.expiry_text, 'small node-expiry'));
+
+    var tagsRoutes = cell(null, 'small');
+    if (n.tags && n.tags.length) {
+      tagsRoutes.appendChild(document.createTextNode(n.tags.join(', ')));
+      tagsRoutes.appendChild(document.createElement('br'));
+    }
+    var routes = document.createElement('span');
+    routes.className = 'muted';
+    routes.textContent = routesLabel + ' ' + n.approved_routes + ' / ' + n.available_routes;
+    tagsRoutes.appendChild(routes);
+    tr.appendChild(tagsRoutes);
+    return tr;
+  }
+
+  function renderNodes(n) {
+    if (!n) return;
+    setText('node-total', n.total);
+    setText('node-online', n.online);
+    setText('node-offline', n.offline);
+    setText('node-expired', n.expired);
+    var status = document.getElementById('node-status');
+    if (status) {
+      status.className = 'badge ' + (n.error ? 'warning' : 'success');
+      status.textContent = n.error
+        ? (isEn ? 'Unavailable' : '读取失败')
+        : (isEn ? 'Sampled every 15s' : '每 15 秒采集');
+    }
+    var err = document.getElementById('node-error');
+    if (err) err.hidden = !n.error;
+    if (n.error) {
+      var et = document.getElementById('node-error-text');
+      if (et) et.textContent = (et.getAttribute('data-tpl') || '__E__').replace('__E__', n.error);
+    }
+    if (rows) {
+      rows.textContent = '';
+      (n.nodes || []).forEach(function (item) { rows.appendChild(nodeRow(item)); });
+    }
+    var table = document.getElementById('node-table');
+    var empty = document.getElementById('node-empty');
+    var has = n.nodes && n.nodes.length > 0;
+    if (table) table.hidden = !has;
+    if (empty) empty.hidden = has;
+  }
+
+  function renderAlerts(list) {
+    var card = document.getElementById('alerts');
+    var box = document.getElementById('alert-list');
+    if (!card || !box) return;
+    var items = list || [];
+    box.textContent = '';
+    items.forEach(function (a) {
+      var item = document.createElement('div');
+      item.className = 'alert-item ' + (a.level || 'info');
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      var text = document.createElement('span');
+      text.textContent = a.text;
+      item.appendChild(dot);
+      item.appendChild(text);
+      box.appendChild(item);
+    });
+    setText('alert-count', items.length);
+    card.hidden = items.length === 0;
+  }
+
+  function refresh() {
+    fetch('/api/monitor', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) return;
+        renderHost(d.host, d.thresholds);
+        renderNodes(d.nodes);
+        renderAlerts(d.alerts);
+      })
+      .catch(function () {});
+  }
+  refresh();
+  setInterval(refresh, 5000);
+})();

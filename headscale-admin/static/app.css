@@ -298,6 +298,9 @@ svg { flex: none; }
 .swatch { width: 15px; height: 15px; border: 2px solid var(--border); border-radius: 4px; flex: none; }
 .dropdown-divider { height: 2px; background: var(--border); margin: 5px 2px; opacity: .25; }
 
+/* 统一 hidden 语义：部分组件设置了 display:flex，会盖掉浏览器默认的 [hidden] */
+[hidden] { display: none !important; }
+
 /* 卡片、统计块 */
 .card {
   background: var(--surface); border: var(--border-thick) solid var(--border); border-radius: var(--radius-lg);
@@ -498,6 +501,38 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .tls-block[hidden] { display: none; }
 .tls-block .hint { margin-top: 10px; }
 
+/* 本机资源与节点监控 */
+.host-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+.host-metric { padding: 14px 16px; background: var(--bg-primary); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); }
+.host-metric-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.host-metric-head span { color: var(--text-tertiary); font-size: .86rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.host-metric-head b { font-size: 1.8rem; font-weight: 800; line-height: 1.1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.meter { height: 10px; margin: 10px 0 8px; background: var(--bg-secondary); border: var(--border-width) solid var(--border); border-radius: var(--radius-full); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--success); transition: width .35s ease, background .2s ease; }
+.meter i.warn { background: var(--warning); }
+.meter i.danger { background: var(--danger); }
+.host-meta { color: var(--text-tertiary); font-size: .86rem; line-height: 1.5; }
+.host-meta b { color: var(--text-secondary); font-weight: 800; font-variant-numeric: tabular-nums; }
+.host-spark { height: 90px; }
+.legend-line.cpu { background: var(--purple); }
+.legend-line.mem { background: var(--blue); }
+.mon-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.mon-sum { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 13px; background: var(--bg-primary); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); }
+.mon-sum span { color: var(--text-tertiary); font-size: .86rem; font-weight: 700; }
+.mon-sum b { font-size: 1.32rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mon-sum.ok b { color: var(--success); }
+.mon-sum.off b { color: var(--text-tertiary); }
+.mon-sum.danger b { color: var(--danger); }
+.alert-list { display: flex; flex-direction: column; gap: 8px; }
+.alert-item { display: flex; align-items: flex-start; gap: 9px; padding: 10px 13px; border: var(--border-width) solid var(--border); border-left-width: 5px; border-radius: var(--radius-md); font-size: .92rem; font-weight: 700; line-height: 1.5; }
+.alert-item .dot { margin-top: 7px; flex: none; }
+.alert-item.critical { background: var(--danger-bg); color: var(--danger); border-left-color: var(--danger); }
+.alert-item.warning { background: var(--warning-bg); color: var(--warning); border-left-color: var(--warning); }
+.alert-item.info { background: var(--info-bg); color: var(--info); border-left-color: var(--info); }
+#node-table { margin-top: 2px; }
+/* 节点表的关键列不折行，窄屏交给 .table-wrap 横向滚动 */
+#node-rows .node-name b, #node-rows .node-time, #node-rows .node-client, #node-rows .node-expiry { white-space: nowrap; }
+
 @media (max-width: 1100px) {
   .form-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -514,9 +549,11 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
   .topbar, .content { padding-left: 16px; padding-right: 16px; }
   .two-col { grid-template-columns: 1fr; }
   .net-rates { grid-template-columns: 1fr; }
+  .host-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .topbar-title { font-size: .92rem; }
   .dropdown-btn span { display: none; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .mon-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

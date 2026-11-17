@@ -15,22 +15,22 @@ type NetPoint struct {
 }
 
 type NetIface struct {
-	Name     string  `json:"name"`
-	RxRate   float64 `json:"rx_rate"` // KB/s
-	TxRate   float64 `json:"tx_rate"`
-	RxTotal  uint64  `json:"rx_total"` // bytes
-	TxTotal  uint64  `json:"tx_total"`
+	Name    string  `json:"name"`
+	RxRate  float64 `json:"rx_rate"` // KB/s
+	TxRate  float64 `json:"tx_rate"`
+	RxTotal uint64  `json:"rx_total"` // bytes
+	TxTotal uint64  `json:"tx_total"`
 }
 
 type NetSnapshot struct {
-	Available bool       `json:"available"`
-	Ifaces    []NetIface `json:"ifaces"`
-	History   []NetPoint `json:"history"`
-	TotalRx   float64    `json:"total_rx"`
-	TotalTx   float64    `json:"total_tx"`
-	TotalRxBytes uint64  `json:"total_rx_bytes"`
-	TotalTxBytes uint64  `json:"total_tx_bytes"`
-	Updated   string     `json:"updated"`
+	Available    bool       `json:"available"`
+	Ifaces       []NetIface `json:"ifaces"`
+	History      []NetPoint `json:"history"`
+	TotalRx      float64    `json:"total_rx"`
+	TotalTx      float64    `json:"total_tx"`
+	TotalRxBytes uint64     `json:"total_rx_bytes"`
+	TotalTxBytes uint64     `json:"total_tx_bytes"`
+	Updated      string     `json:"updated"`
 }
 
 type netCounter struct{ rx, tx uint64 }

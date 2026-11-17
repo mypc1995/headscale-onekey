@@ -16,14 +16,17 @@ import (
 )
 
 type App struct {
-	store    *AuthStore
-	sessions *SessionManager
-	hs       *HSClient
-	net      *NetMonitor
-	tmpl     *template.Template
-	port     string
-	tplDir   string
-	staticDir string
+	store      *AuthStore
+	sessions   *SessionManager
+	hs         *HSClient
+	net        *NetMonitor
+	host       *HostMonitor
+	nodes      *NodeMonitor
+	thresholds AlertThresholds
+	tmpl       *template.Template
+	port       string
+	tplDir     string
+	staticDir  string
 }
 
 type Page struct {
@@ -87,21 +90,37 @@ func main() {
 	}
 
 	funcs := template.FuncMap{
-		"field":    fieldValue,
-		"tf":       protoTime,
-		"userOf":   userOf,
-		"join":     strings.Join,
-		"list":     joinAny,
-		"has":      strings.Contains,
-		"short":    func(s string, n int) string { if len(s) > n { return s[:n] + "…" }; return s },
-		"yearNow":  func() int { return time.Now().Year() },
-		"t":        tr,
-		"icon":     icon,
-		"langName": func(l string) string { if l == "en" { return "English" }; return "中文" },
-		"isLang":   func(l, cur string) bool { return l == cur },
-		"pagePath": func(active string) string { if active == "dashboard" || active == "" { return "/" }; return "/" + active },
-		"rate":     fmtRate,
-		"bytes":    fmtBytes,
+		"field":  fieldValue,
+		"tf":     protoTime,
+		"userOf": userOf,
+		"join":   strings.Join,
+		"list":   joinAny,
+		"has":    strings.Contains,
+		"short": func(s string, n int) string {
+			if len(s) > n {
+				return s[:n] + "…"
+			}
+			return s
+		},
+		"yearNow": func() int { return time.Now().Year() },
+		"t":       tr,
+		"icon":    icon,
+		"langName": func(l string) string {
+			if l == "en" {
+				return "English"
+			}
+			return "中文"
+		},
+		"isLang": func(l, cur string) bool { return l == cur },
+		"pagePath": func(active string) string {
+			if active == "dashboard" || active == "" {
+				return "/"
+			}
+			return "/" + active
+		},
+		"rate":  fmtRate,
+		"bytes": fmtBytes,
+		"pct":   func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
 		"dict": func(pairs ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(pairs); i += 2 {
@@ -115,8 +134,10 @@ func main() {
 		log.Fatalf("加载模板失败: %v", err)
 	}
 
+	hs := NewHSClient()
 	a := &App{
-		store: store, sessions: NewSessionManager(store.DB, *secureCookie), hs: NewHSClient(), net: NewNetMonitor(),
+		store: store, sessions: NewSessionManager(store.DB, *secureCookie), hs: hs, net: NewNetMonitor(),
+		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir,
 	}
 
@@ -137,6 +158,7 @@ func main() {
 	p.HandleFunc("GET /ops", a.opsPage)
 	p.HandleFunc("GET /admins", a.adminsPage)
 	p.HandleFunc("GET /api/netmon", a.netmonAPI)
+	p.HandleFunc("GET /api/monitor", a.monitorAPI)
 	a.registerActions(p)
 	mux.Handle("/", a.sessions.Wrap(p))
 

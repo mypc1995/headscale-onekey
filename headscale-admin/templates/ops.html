@@ -1,4 +1,79 @@
 {{define "ops"}}{{template "head" .}}
+<section class="card" id="alerts" {{if not .Data.Alerts}}hidden{{end}}>
+  <div class="card-head">
+    <h2 class="card-title">{{icon "bolt" 18}} {{t .Lang "section.alerts"}}</h2>
+    <span class="badge warning" id="alert-count">{{len .Data.Alerts}}</span>
+  </div>
+  <div class="alert-list" id="alert-list">
+    {{range .Data.Alerts}}<div class="alert-item {{.Level}}"><span class="dot"></span><span>{{.Text}}</span></div>{{end}}
+  </div>
+</section>
+
+<section class="card" id="monitor" data-cpu="{{.Data.Thresholds.CPU}}" data-mem="{{.Data.Thresholds.Mem}}">
+  <div class="card-head">
+    <h2 class="card-title">{{icon "cpu" 18}} {{t .Lang "section.host"}}</h2>
+    <span class="badge {{if .Data.Host.Available}}success{{else}}muted{{end}}" id="host-status">{{if .Data.Host.Available}}{{t .Lang "host.live"}}{{else}}{{t .Lang "host.unavailable"}}{{end}}</span>
+  </div>
+  {{if .Data.Host.Available}}
+  <div class="host-grid">
+    <div class="host-metric">
+      <div class="host-metric-head"><span>{{t .Lang "host.cpu"}}</span><b id="host-cpu">{{pct .Data.Host.CPUPercent}}</b></div>
+      <div class="meter"><i id="host-cpu-bar" style="width:{{pct .Data.Host.CPUPercent}}"></i></div>
+      <div class="host-meta">{{t .Lang "host.cores" .Data.Host.CPUCount}} · {{t .Lang "host.load"}} <b id="host-load">{{.Data.Host.LoadText}}</b></div>
+    </div>
+    <div class="host-metric">
+      <div class="host-metric-head"><span>{{t .Lang "host.mem"}}</span><b id="host-mem">{{pct .Data.Host.MemPercent}}</b></div>
+      <div class="meter"><i id="host-mem-bar" style="width:{{pct .Data.Host.MemPercent}}"></i></div>
+      <div class="host-meta" id="host-mem-text">{{.Data.Host.MemDetailText}}</div>
+    </div>
+  </div>
+  <svg class="spark host-spark" viewBox="0 0 600 90" preserveAspectRatio="none" role="img" aria-label="{{t .Lang "host.spark"}}">
+    <polyline id="host-spark-cpu" fill="none" stroke="var(--purple)" stroke-width="2.5" points=""></polyline>
+    <polyline id="host-spark-mem" fill="none" stroke="var(--blue)" stroke-width="2" points=""></polyline>
+  </svg>
+  <div class="net-legend">
+    <span><i class="legend-line cpu"></i>{{t .Lang "host.cpu"}}</span>
+    <span><i class="legend-line mem"></i>{{t .Lang "host.mem"}}</span>
+    <span class="muted">{{t .Lang "host.uptime"}} <b id="host-uptime">{{.Data.Host.UptimeText}}</b></span>
+    <span class="muted" id="host-updated" data-tpl="{{t .Lang "host.updated" "__T__"}}">{{t .Lang "host.updated" .Data.Host.Updated}}</span>
+  </div>
+  {{else}}
+  <div class="empty">{{icon "cpu" 18}} {{t .Lang "host.unavailable"}}</div>
+  {{end}}
+</section>
+
+<section class="card" id="nodemon">
+  <div class="card-head">
+    <h2 class="card-title">{{icon "server" 18}} {{t .Lang "section.nodeMon"}}</h2>
+    <span class="badge {{if .Data.Nodes.Error}}warning{{else}}success{{end}}" id="node-status">{{if .Data.Nodes.Error}}{{t .Lang "nodeMon.unavailable"}}{{else}}{{t .Lang "nodeMon.live"}}{{end}}</span>
+  </div>
+  <div class="mon-summary">
+    <div class="mon-sum"><span>{{t .Lang "nodeMon.total"}}</span><b id="node-total">{{.Data.Nodes.Total}}</b></div>
+    <div class="mon-sum ok"><span>{{t .Lang "nodeMon.online"}}</span><b id="node-online">{{.Data.Nodes.Online}}</b></div>
+    <div class="mon-sum off"><span>{{t .Lang "nodeMon.offline"}}</span><b id="node-offline">{{.Data.Nodes.Offline}}</b></div>
+    <div class="mon-sum danger"><span>{{t .Lang "nodeMon.expired"}}</span><b id="node-expired">{{.Data.Nodes.Expired}}</b></div>
+  </div>
+  <div class="notice warn" id="node-error" {{if not .Data.Nodes.Error}}hidden{{end}}>{{icon "x" 17}}<span id="node-error-text" data-tpl="{{t .Lang "nodeMon.stale" "__E__"}}">{{t .Lang "nodeMon.stale" .Data.Nodes.Error}}</span></div>
+  <div class="table-wrap" id="node-table" {{if not .Data.Nodes.Nodes}}hidden{{end}}>
+    <table>
+      <thead><tr><th>{{t .Lang "nodeMon.node"}}</th><th>{{t .Lang "nodeMon.user"}}</th><th>{{t .Lang "nodeMon.ip"}}</th><th>{{t .Lang "nodeMon.status"}}</th><th>{{t .Lang "nodeMon.lastSeen"}}</th><th>{{t .Lang "nodeMon.client"}}</th><th>{{t .Lang "nodeMon.expiry"}}</th><th>{{t .Lang "nodeMon.tagsRoutes"}}</th></tr></thead>
+      <tbody id="node-rows" data-routes="{{t .Lang "nodeMon.routes"}}">
+        {{range .Data.Nodes.Nodes}}<tr>
+          <td class="node-name"><b>{{.Name}}</b><div class="muted small">#{{.ID}}</div></td>
+          <td class="small">{{.User}}</td>
+          <td class="small mono nowrap">{{if .IPs}}{{join .IPs ", "}}{{else}}—{{end}}</td>
+          <td><span class="badge {{if eq .State "online"}}success{{else if eq .State "expired"}}danger{{else}}muted{{end}}">{{if eq .State "online"}}<span class="dot"></span>{{end}}{{.StateText}}</span></td>
+          <td class="small node-time">{{.LastSeenText}}<div class="muted">{{.LastSeenAbs}}</div></td>
+          <td class="small node-client">{{if .Version}}{{.Version}}{{else}}—{{end}}<div class="muted">{{.OSText}} · {{.RegisterText}}</div></td>
+          <td class="small node-expiry">{{.ExpiryText}}</td>
+          <td class="small">{{if .Tags}}{{join .Tags ", "}}<br>{{end}}<span class="muted">{{t $.Lang "nodeMon.routes"}} {{.ApprovedRoutes}} / {{.AvailableRoutes}}</span></td>
+        </tr>{{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="empty" id="node-empty" {{if .Data.Nodes.Nodes}}hidden{{end}}>{{icon "server" 18}} {{t .Lang "nodeMon.empty"}}</div>
+</section>
+
 <section class="card" id="netmon">
   <div class="card-head">
     <h2 class="card-title">{{icon "activity" 18}} {{t .Lang "section.netmon"}}</h2>

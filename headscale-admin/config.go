@@ -47,7 +47,7 @@ type ConfigPage struct {
 	CertPEM string
 	KeyPEM  string
 
-	Cert CertInfo
+	Cert  CertInfo
 	Renew RenewInfo
 
 	Service    string
@@ -58,18 +58,18 @@ type ConfigPage struct {
 
 // CertInfo 描述当前实际加载的证书状态。
 type CertInfo struct {
-	Source   string
-	Path     string
-	KeyPath  string
-	Subject  string
-	Issuer   string
+	Source    string
+	Path      string
+	KeyPath   string
+	Subject   string
+	Issuer    string
 	NotBefore string
-	NotAfter string
-	DaysLeft int
-	SAN      string
-	KeyMatch bool
-	Valid    bool
-	Problem  string
+	NotAfter  string
+	DaysLeft  int
+	SAN       string
+	KeyMatch  bool
+	Valid     bool
+	Problem   string
 }
 
 // RenewInfo 描述证书自动续期通道状态。

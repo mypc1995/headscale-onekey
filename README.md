@@ -94,7 +94,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 - 用户：创建、重命名、删除，支持显示名与邮箱。
 - 密钥与接入：预授权密钥生成/失效/删除，API key 生成/失效/删除，客户端接入命令。有效期改为下拉选择：1 小时、24 小时、7 天、30 天、90 天、1 年、长期（100 年，等效永不过期）。
 - 网络与策略：ACL 策略编辑、DNS/MagicDNS、DERP 开关、完整配置编辑；保存前自动备份并做 `configtest` 校验。
-- 运维与监控：服务状态、版本、证书到期、最近日志、重启服务，以及每 3 秒刷新的实时网速（读取 `/proc/net/dev`，含上下行速率、累计流量、各网卡明细与近期曲线；非 Linux 自动降级为不可用提示）。
+- 运维与监控：本机 CPU/内存/负载/运行时长（3 秒采样、3 分钟曲线）、节点在线状态与握手/版本/到期/路由（15 秒采样）、阈值告警、服务状态、版本、证书到期、最近日志、重启服务，以及每 3 秒刷新的实时网速（读取 `/proc/net/dev`，含上下行速率、累计流量、各网卡明细与近期曲线；非 Linux 自动降级为不可用提示）。
 - 管理员：管理员增删改、角色（admin/readonly）、修改密码。
 - 配置管理：域名、端口与网段、HTTPS 证书、证书自动续期集中在网页端，见下节。
 
@@ -159,13 +159,39 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 源码目录为 `headscale-admin/`，不依赖任何未声明许可证的第三方项目。
 
+#### 运维监控页（`/ops`）
+
+**本机资源**：每 3 秒读取 `/proc/stat`、`/proc/meminfo`、`/proc/loadavg`、`/proc/uptime`，展示 CPU 使用率、内存使用率（已用/总量）、系统负载（1/5/15 分钟）、运行时长和最近 3 分钟的 CPU/内存曲线。CPU 使用率由两次采样的累计 tick 差值算出，首次采样显示 0；内存使用率按 `MemTotal - MemAvailable` 计算，老内核没有 `MemAvailable` 时退化为 `MemFree + Buffers + Cached`。非 Linux 环境没有 `/proc`，页面显示不可用提示，不影响其他功能。
+
+**节点监控**：后台每 15 秒执行一次 `headscale nodes list -o json`，缓存结果并展示节点总数、在线、离线、密钥过期数量，以及每个节点的名称、所属用户、虚拟 IP、在线状态、最后握手时间、客户端版本、系统、密钥到期、标签与路由数量。状态分在线、离线、密钥过期三种，密钥过期优先显示。CLI 读取失败时保留上一次成功的数据，并在卡片顶部提示「显示的是上一次成功采集的结果」。
+
+节点侧能采集到的只有控制面指标。Tailscale 客户端不会把 CPU、内存等主机资源上报给 headscale，因此各节点的 CPU/内存不在这个页面的能力范围内；如果确有需要，应在节点上部署采集 agent，把数据推到新增接口，按下面的扩展方式接入。
+
+**告警**：内置 7 条规则——headscale 服务不是 active、CPU 超阈值、内存超阈值、1 分钟负载超过核数×倍率、节点离线、节点密钥过期、节点数据采集失败。阈值可用环境变量覆盖：
+
+| 变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `HSA_ALERT_CPU` | 85 | CPU 使用率百分比阈值 |
+| `HSA_ALERT_MEM` | 90 | 内存使用率百分比阈值 |
+| `HSA_ALERT_LOAD` | 2 | 1 分钟负载上限 = CPU 核数 × 该倍率 |
+
+**接口**：`GET /api/monitor` 需要登录，返回 `host`、`nodes`、`alerts`、`thresholds` 四部分，页面每 5 秒轮询一次；节点数据复用服务端 15 秒缓存，多开页面不会频繁调用 CLI。
+
+**扩展方式**：
+
+- 新增本机指标：在 `hostmon.go` 的 `HostSnapshot` 加字段并在 `sample()` 里填充（例如读 `/proc/mounts` 统计磁盘占用），`newHostView` 补展示文案，前端加一个进度条。
+- 新增节点指标：在 `nodemont.go` 的 `nodeStatFromMap` 里从 CLI JSON 取字段并加入 `NodeStat`，模板与 `static/app.js` 的 `nodeRow` 各加一列。
+- 新增告警规则：在 `alerts.go` 实现 `func(alertInput, AlertThresholds) []MonitorAlert`，注册到 `alertRules` 切片，页面与接口输出不需要改动；阈值加到 `AlertThresholds` 并在 `defaultAlertThresholds` 里读环境变量。
+- 接通知渠道：`MonitorAlert` 的 `Key` 与 `Level` 已固定，可在规则求值后按 key 去重，再推送到邮件或 Webhook。
+
 ## 验证
 
 在任意 Linux（包括 WSL）上可运行只读验证，不会创建用户、写 `/etc` 或启动服务：
 
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
-bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、配置校验与 CSRF（需 go/curl）
+bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验与 CSRF（需 go/curl）
+(cd headscale-admin && go test ./...)   # 解析、节点映射、双语展示与告警规则单元测试
 ```
 
 ## 安全提示
