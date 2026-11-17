@@ -15,6 +15,7 @@
 - 内置 `configtest` 配置自检，失败即终止；成功后修正数据目录属主。
 - 自动创建默认用户与 24 小时预授权密钥。
 - 可选部署 HeadControl，默认直接开放 3000 端口，并自动完成 API key 初始化。
+- HeadControl 默认启用 HTTP Basic Auth：未指定密码时自动生成，凭据以带盐摘要存入仅 root 可读的 systemd 环境文件。
 - HeadControl 默认应用中文补丁：页面、菜单、按钮、前端提示、后端 toast 与错误信息均已汉化。
 
 ## 目录结构
@@ -25,7 +26,7 @@
 | `deploy-headcontrol.sh` | HeadControl 一键部署与汉化 |
 | `headcontrol-zh.patch` | HeadControl 中文补丁，针对固定上游提交 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
-| `test-headcontrol-patch.sh` | 汉化补丁应用与编译验证 |
+| `test-headcontrol-patch.sh` | 汉化补丁、Basic Auth 应用与编译验证 |
 
 ## 快速开始
 
@@ -76,16 +77,25 @@ sudo bash deploy-headscale.sh -u https://hs.example.com \
 sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080
 ```
 
-默认直接放行 TCP/3000，浏览器访问 `http://<服务器IP>:3000`。如需限制来源：
+默认直接放行 TCP/3000，浏览器访问 `http://<服务器IP>:3000` 会弹出登录框。未指定密码时会交互输入；非交互执行则自动生成随机密码并在结束时打印一次，同时保存到 `/root/.headcontrol-auth`（0600）。密码哈希与盐写入 `/etc/headcontrol/auth.env`（0600），明文不出现在 systemd unit 中。
+
+自定义账号：
+
+```bash
+sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
+  --auth-user ops --auth-pass 'YourStrongPassword'
+```
+
+如需限制来源：
 
 ```bash
 sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
   --allow-cidr 192.168.1.0/24
 ```
 
-可选参数：`--port 3000`、`--no-firewall`、`--no-zh`（使用原版英文界面）。
+可选参数：`--port 3000`、`--no-firewall`、`--no-zh`（使用原版英文界面）、`--no-auth`（关闭密码保护，不推荐）。
 
-脚本会按固定提交拉取 HeadControl 源码，应用 `headcontrol-zh.patch` 后编译，因此不需要把第三方源码放进本仓库。API key 保存到 `/root/.headcontrol-apikey`（权限 0600）。
+注意：HTTP Basic Auth 在明文 HTTP 下凭据只是 Base64 编码，公网使用应配合 HTTPS 或至少用 `--allow-cidr` 限制来源。
 
 ## 验证
 
@@ -93,12 +103,12 @@ sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
 
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
-bash test-headcontrol-patch.sh    # 验证汉化补丁应用与 Go 编译（需 git/go/gcc）
+bash test-headcontrol-patch.sh    # 验证汉化补丁、Basic Auth 与 Go 编译（需 git/go/gcc/curl/openssl）
 ```
 
 ## 安全提示
 
-- HeadControl 没有独立登录密码；直接开放 3000 端口意味着任何能访问该端口的人都可以管理 Headscale。生产环境建议配合 `--allow-cidr`、反向代理认证或网络 ACL。
+- HeadControl 默认启用 Basic Auth，但 HTTP 下凭据仍是 Base64 明文；生产环境建议配合 HTTPS、反向代理认证或网络 ACL。可用 `--no-auth` 显式关闭，但不推荐。
 - HTTP 模式为明文，较新的 Tailscale 客户端可能需要设置 `TS_ALLOW_HTTP_CONTROL_SERVER=1`。
 - HTTPS 模式需要域名正确解析到本机，并确保 80（证书验证）和 443（服务）端口可达。
 - 启用内置 DERP 时需放行 UDP/3478。

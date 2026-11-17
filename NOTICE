@@ -20,5 +20,6 @@ HeadControl
 汉化补丁
 --------
 
-headcontrol-zh.patch 由本项目基于 HeadControl 固定提交制作，仅包含界面与提示文案的
-中文替换。该补丁不属于本仓库 MIT License 的授权范围；其使用受上游项目权利状态约束。
+headcontrol-zh.patch 由本项目基于 HeadControl 固定提交制作，包含界面与提示文案的中文替换，
+以及可选的 HTTP Basic Auth 中间件。该补丁不属于本仓库 MIT License 的授权范围；
+其使用受上游项目权利状态约束。

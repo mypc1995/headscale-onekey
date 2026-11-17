@@ -667,6 +667,77 @@ index 4656fb0..e6c7620 100644
  	}
  	return &resp.Node, nil
  }
+diff --git a/main.go b/main.go
+index ed85bd4..85f3bbd 100644
+--- a/main.go
++++ b/main.go
+@@ -1,13 +1,57 @@
+ package main
+ 
+ import (
++	"crypto/sha256"
++	"crypto/subtle"
++	"encoding/hex"
+ 	"flag"
+ 	"headcontrol/internal/handler"
+ 	"headcontrol/internal/store"
+ 	"log"
+ 	"net/http"
++	"os"
+ )
+ 
++// basicAuth 在环境变量配置完整时为整个站点启用 HTTP Basic Auth。
++// 密码以 salt + password 的 SHA-256 摘要保存，避免明文出现在 systemd unit 中。
++func basicAuth(next http.Handler) http.Handler {
++	user := os.Getenv("HEADCONTROL_AUTH_USER")
++	salt := os.Getenv("HEADCONTROL_AUTH_SALT")
++	hashHex := os.Getenv("HEADCONTROL_AUTH_HASH")
++
++	// 三者都为空表示未启用认证；部分为空则是配置错误，直接拒绝启动。
++	if user == "" && salt == "" && hashHex == "" {
++		return next
++	}
++	if user == "" || salt == "" || hashHex == "" {
++		log.Fatal("认证配置不完整：需要 HEADCONTROL_AUTH_USER / HEADCONTROL_AUTH_SALT / HEADCONTROL_AUTH_HASH")
++	}
++	expected, err := hex.DecodeString(hashHex)
++	if err != nil || len(expected) != sha256.Size {
++		log.Fatal("HEADCONTROL_AUTH_HASH 不是有效的 SHA-256 十六进制摘要")
++	}
++
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		u, p, ok := r.BasicAuth()
++		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 {
++			unauthorized(w)
++			return
++		}
++		sum := sha256.Sum256([]byte(salt + p))
++		if subtle.ConstantTimeCompare(sum[:], expected) != 1 {
++			unauthorized(w)
++			return
++		}
++		next.ServeHTTP(w, r)
++	})
++}
++
++func unauthorized(w http.ResponseWriter) {
++	w.Header().Set("WWW-Authenticate", `Basic realm="HeadControl", charset="UTF-8"`)
++	w.Header().Set("Cache-Control", "no-store")
++	http.Error(w, "401 未授权：需要用户名和密码", http.StatusUnauthorized)
++}
++
+ func main() {
+ 	port := flag.String("port", "8080", "Server port")
+ 	dbPath := flag.String("db", "headcontrol.db", "SQLite database path")
+@@ -53,7 +97,7 @@ func main() {
+ 	http.HandleFunc("/api/update-settings", h.RequireSetup(h.UpdateSettings))
+ 
+ 	log.Printf("HeadControl starting on http://localhost:%s", *port)
+-	if err := http.ListenAndServe(":"+*port, nil); err != nil {
++	if err := http.ListenAndServe(":"+*port, basicAuth(http.DefaultServeMux)); err != nil {
+ 		log.Fatalf("server: %v", err)
+ 	}
+ }
 diff --git a/static/js/app.js b/static/js/app.js
 index f6681dd..e97cb7e 100644
 --- a/static/js/app.js

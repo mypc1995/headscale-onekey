@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# HeadControl 汉化补丁的只读验证脚本
-# 用途：在临时目录拉取固定上游提交、应用补丁、编译，并确认中文资源生效
+# HeadControl 汉化与 Basic Auth 补丁的只读验证脚本
+# 用途：在临时目录拉取固定上游提交、应用补丁、编译，并确认中文资源与密码保护生效
 # 特点：不安装系统包、不写 /opt、不碰 systemd、不创建服务
 #
 # 用法: bash test-headcontrol-patch.sh
@@ -12,8 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCH_FILE="${SCRIPT_DIR}/headcontrol-zh.patch"
 HC_REPO="https://github.com/ahmadzip/HeadControl.git"
 HC_COMMIT="cfdfc63c766af3658851ef766bd84ab678fe005a"
+AUTH_USER="admin"
+AUTH_PASS="testpass123"
+AUTH_SALT="0123456789abcdef0123456789abcdef"
 TMPDIR="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR"' EXIT
+SERVER_PID=""
+trap 'if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$TMPDIR"' EXIT
 
 C_RESET=$'\033[0m'; C_GREEN=$'\033[1;32m'; C_RED=$'\033[1;31m'; C_YELLOW=$'\033[1;33m'
 ok()   { printf '%s[PASS]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
@@ -22,12 +26,12 @@ info() { printf '%s[INFO]%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
 FAILS=0
 
 echo "=========================================="
-echo " HeadControl 汉化补丁验证"
+echo " HeadControl 汉化与认证补丁验证"
 echo " 临时目录: $TMPDIR"
 echo "=========================================="
 
 info "检查依赖"
-for c in git go gcc; do
+for c in git go gcc curl openssl; do
   command -v "$c" >/dev/null 2>&1 || { fail "缺少依赖: $c"; exit 1; }
 done
 [[ -f "$PATCH_FILE" ]] || { fail "未找到补丁: $PATCH_FILE"; exit 1; }
@@ -67,6 +71,35 @@ grep -q '总览' templates/layout/layout.html && ok "导航已汉化" || fail "�
 grep -q '用户总数' templates/pages/dashboard.html && ok "仪表盘已汉化" || fail "仪表盘未汉化"
 grep -q '初始化设置' templates/pages/setup.html && ok "初始化页面已汉化" || fail "初始化页面未汉化"
 grep -q '连接' internal/headscale/client.go && ok "后端提示已汉化" || fail "后端提示未汉化"
+
+info "验证 Basic Auth"
+AUTH_HASH="$(printf '%s' "${AUTH_SALT}${AUTH_PASS}" | openssl dgst -sha256 -r | awk '{print $1}')"
+TEST_PORT=$((38000 + RANDOM % 1000))
+(
+  cd "$TMPDIR/src"
+  HEADCONTROL_AUTH_USER="$AUTH_USER" \
+  HEADCONTROL_AUTH_SALT="$AUTH_SALT" \
+  HEADCONTROL_AUTH_HASH="$AUTH_HASH" \
+    "$TMPDIR/headcontrol" -port "$TEST_PORT" -db "$TMPDIR/test.db" >"$TMPDIR/server.log" 2>&1
+) &
+SERVER_PID=$!
+for _ in $(seq 1 30); do
+  curl -s -o /dev/null "http://127.0.0.1:${TEST_PORT}/setup" && break
+  sleep 0.2
+done
+
+CODE="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${TEST_PORT}/setup")"
+[[ "$CODE" == "401" ]] && ok "无凭据请求被拒绝 (401)" || fail "无凭据请求返回 ${CODE}，预期 401"
+
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -u "${AUTH_USER}:${AUTH_PASS}" "http://127.0.0.1:${TEST_PORT}/setup")"
+[[ "$CODE" == "200" ]] && ok "正确凭据可访问 (200)" || fail "正确凭据返回 ${CODE}，预期 200"
+
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -u "${AUTH_USER}:wrongpass" "http://127.0.0.1:${TEST_PORT}/setup")"
+[[ "$CODE" == "401" ]] && ok "错误密码被拒绝 (401)" || fail "错误密码返回 ${CODE}，预期 401"
+
+kill "$SERVER_PID" 2>/dev/null || true
+wait "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
 
 echo
 echo "=========================================="
