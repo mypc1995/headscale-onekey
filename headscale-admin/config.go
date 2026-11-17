@@ -547,10 +547,14 @@ func configWarnings(p *ConfigPage, lang string) []string {
 			}
 		}
 		if p.TLSMode == "http" && u.Scheme == "https" {
-			w = append(w, tr(lang, "cfg.warn.schemeMismatch", "https", "HTTP"))
+			w = append(w, tr(lang, "cfg.warn.schemeMismatch", "https", tr(lang, "cfg.mode.http")))
 		}
 		if p.TLSMode != "http" && u.Scheme == "http" {
-			w = append(w, tr(lang, "cfg.warn.schemeMismatch", "http", p.TLSMode))
+			modeLabel := tr(lang, "cfg.mode.manual")
+			if p.TLSMode == "letsencrypt" {
+				modeLabel = tr(lang, "cfg.mode.le")
+			}
+			w = append(w, tr(lang, "cfg.warn.schemeMismatch", "http", modeLabel))
 		}
 	}
 	return w
