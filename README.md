@@ -26,7 +26,10 @@
 | `deploy-headcontrol.sh` | HeadControl 一键部署与汉化 |
 | `headcontrol-zh.patch` | HeadControl 中文补丁，针对固定上游提交 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
+| `deploy-headscale-admin.sh` | 全量管理界面一键部署（默认 3001） |
+| `headscale-admin/` | 全量管理界面 Go 源码、模板与静态资源 |
 | `test-headcontrol-patch.sh` | 汉化补丁、Basic Auth 应用与编译验证 |
+| `test-headscale-admin.sh` | 全量管理界面编译、登录与 CSRF 验证 |
 
 ## 快速开始
 
@@ -97,6 +100,35 @@ sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
 
 注意：HTTP Basic Auth 在明文 HTTP 下凭据只是 Base64 编码，公网使用应配合 HTTPS 或至少用 `--allow-cidr` 限制来源。
 
+### 3. 部署全量管理界面（Headscale Admin）
+
+HeadControl 比较轻量。如果需要完整管理界面，可部署本项目的 `headscale-admin`：Go 单二进制，中文界面，默认跑在 3001，可与 3000 的 HeadControl 并行。
+
+```bash
+sudo bash deploy-headscale-admin.sh --port 3001
+```
+
+首次部署会生成随机管理员密码并打印一次；也可指定：
+
+```bash
+sudo bash deploy-headscale-admin.sh --port 3001 \
+  --admin-user admin --admin-pass 'YourStrongPassword'
+```
+
+重新部署默认保留已有密码；需要重置时加 `--reset-admin`。限制来源用 `--allow-cidr`，不修改防火墙用 `--no-firewall`。
+
+功能覆盖：
+
+- 总览：用户数、节点数、在线数、路由数、密钥数、服务状态、证书到期。
+- 节点：列表、重命名、过期、删除、标签、路由审批。
+- 用户：创建、重命名、删除，支持显示名与邮箱。
+- 密钥与接入：预授权密钥生成/失效/删除，API key 生成/失效/删除，客户端接入命令。
+- 网络与策略：ACL 策略编辑、DNS/MagicDNS、DERP 开关、完整配置编辑；保存前自动备份并做 `configtest` 校验。
+- 运维与监控：服务状态、版本、证书到期、最近日志、重启服务。
+- 管理员：管理员增删改、角色（admin/readonly）、修改密码。
+
+认证采用独立账号体系：密码用 PBKDF2-HMAC-SHA256（12 万次迭代）加盐保存，会话使用 HttpOnly Cookie，所有表单带 CSRF token，只读角色无法提交修改。源码目录为 `headscale-admin/`，不依赖任何未声明许可证的第三方项目。
+
 ## 验证
 
 在任意 Linux（包括 WSL）上可运行只读验证，不会创建用户、写 `/etc` 或启动服务：
@@ -104,6 +136,7 @@ sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
 bash test-headcontrol-patch.sh    # 验证汉化补丁、Basic Auth 与 Go 编译（需 git/go/gcc/curl/openssl）
+bash test-headscale-admin.sh      # 验证全量管理界面编译、登录、页面与 CSRF（需 go/curl）
 ```
 
 ## 安全提示

@@ -1,0 +1,49 @@
+{{define "keys"}}{{template "head" .}}
+<section class="panel">
+  <h2>生成预授权密钥</h2>
+  <form method="post" action="/keys/preauth/create" class="grid-form">
+    {{template "csrf" .}}
+    <label>用户<select name="user_id" required>{{range .Data.Users}}<option value="{{.ID}}">{{.Name}} (ID {{.ID}})</option>{{end}}</select></label>
+    <label>有效期<input name="expiration" value="24h" required></label>
+    <label>标签<input name="tags" placeholder="tag1,tag2"></label>
+    <label class="check"><input type="checkbox" name="reusable"> 可重复使用</label>
+    <label class="check"><input type="checkbox" name="ephemeral"> 临时节点</label>
+    <button class="primary" type="submit">生成</button>
+  </form>
+  <p class="hint">客户端接入：<code>tailscale up --login-server=&lt;你的 server_url&gt; --authkey=&lt;密钥&gt;</code></p>
+</section>
+<section class="panel">
+  <h2>预授权密钥 <span class="muted">{{len .Data.Preauth}} 个</span></h2>
+  {{if .Data.Preauth}}<div class="table-wrap"><table>
+    <tr><th>ID</th><th>用户</th><th>Key</th><th>过期时间</th><th>操作</th></tr>
+    {{range .Data.Preauth}}<tr>
+      <td>{{field . "id"}}</td><td>{{userOf .}}</td><td><code>{{short (field . "key") 28}}</code></td><td>{{tf (index . "expiration")}}</td>
+      <td class="ops">
+        <form method="post" action="/keys/preauth/expire" onsubmit="return confirm('立即使密钥失效？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="warn">失效</button></form>
+        <form method="post" action="/keys/preauth/delete" onsubmit="return confirm('确认删除密钥？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="danger">删除</button></form>
+      </td>
+    </tr>{{end}}
+  </table></div>{{else}}<p class="empty">暂无预授权密钥。</p>{{end}}
+</section>
+<section class="panel">
+  <h2>生成 API key</h2>
+  <form method="post" action="/keys/api/create" class="grid-form">
+    {{template "csrf" .}}
+    <label>有效期<input name="expiration" value="90d" required></label>
+    <button class="primary" type="submit">生成</button>
+  </form>
+</section>
+<section class="panel">
+  <h2>API keys <span class="muted">{{len .Data.APIKeys}} 个</span></h2>
+  {{if .Data.APIKeys}}<div class="table-wrap"><table>
+    <tr><th>ID</th><th>前缀</th><th>过期时间</th><th>创建时间</th><th>操作</th></tr>
+    {{range .Data.APIKeys}}<tr>
+      <td>{{field . "id"}}</td><td><code>{{field . "prefix"}}</code></td><td>{{tf (index . "expiration")}}</td><td>{{tf (index . "created_at")}}</td>
+      <td class="ops">
+        <form method="post" action="/keys/api/expire" onsubmit="return confirm('立即使该 API key 失效？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="warn">失效</button></form>
+        <form method="post" action="/keys/api/delete" onsubmit="return confirm('确认删除该 API key？')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="danger">删除</button></form>
+      </td>
+    </tr>{{end}}
+  </table></div>{{else}}<p class="empty">暂无 API key。</p>{{end}}
+</section>
+{{template "foot" .}}{{end}}

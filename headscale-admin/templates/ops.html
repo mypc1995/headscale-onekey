@@ -1,0 +1,17 @@
+{{define "ops"}}{{template "head" .}}
+<section class="panel">
+  <h2>运行状态</h2>
+  <div class="kv">
+    <div><span>headscale 服务</span><b class="{{if eq .Data.Service "active"}}ok{{else}}bad{{end}}">{{.Data.Service}}</b></div>
+    <div><span>版本</span><b>{{.Data.Version}}</b></div>
+    <div><span>证书到期</span><b>{{.Data.Cert}}</b></div>
+    <div><span>配置文件</span><b>{{.Data.ConfigPath}}</b></div>
+    <div><span>策略文件</span><b>{{.Data.PolicyPath}}</b></div>
+  </div>
+  <form method="post" action="/ops/restart" onsubmit="return confirm('确认重启 headscale 服务？现有连接会短暂中断。')">{{template "csrf" .}}<button class="warn" type="submit">重启 headscale</button></form>
+</section>
+<section class="panel">
+  <h2>最近日志 <span class="muted">journalctl -u headscale -n 80</span></h2>
+  <pre class="logs">{{.Data.Logs}}</pre>
+</section>
+{{template "foot" .}}{{end}}

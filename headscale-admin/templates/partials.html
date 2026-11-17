@@ -1,0 +1,52 @@
+{{define "head"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} · Headscale Admin</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app">
+<aside class="side">
+  <div class="brand"><span class="logo">HS</span><span>Headscale Admin</span></div>
+  <nav>
+    <a href="/" class="{{if eq .Active "dashboard"}}on{{end}}">总览</a>
+    <a href="/nodes" class="{{if eq .Active "nodes"}}on{{end}}">节点</a>
+    <a href="/users" class="{{if eq .Active "users"}}on{{end}}">用户</a>
+    <a href="/keys" class="{{if eq .Active "keys"}}on{{end}}">密钥与接入</a>
+    <a href="/network" class="{{if eq .Active "network"}}on{{end}}">网络与策略</a>
+    <a href="/ops" class="{{if eq .Active "ops"}}on{{end}}">运维与监控</a>
+    <a href="/admins" class="{{if eq .Active "admins"}}on{{end}}">管理员</a>
+  </nav>
+  <div class="side-foot"><span>{{.Username}}</span><span class="badge">{{if eq .Role "admin"}}管理员{{else}}只读{{end}}</span></div>
+</aside>
+<main class="main">
+<header class="top"><button class="menu" onclick="document.querySelector('.side').classList.toggle('show')">☰</button><h1>{{.Title}}</h1></header>
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{end}}
+
+{{define "foot"}}</main></div>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
+
+{{define "login"}}<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登录 · Headscale Admin</title><link rel="stylesheet" href="/static/app.css"></head>
+<body class="login-page">
+<div class="login-box">
+  <div class="brand center"><span class="logo">HS</span><span>Headscale Admin</span></div>
+  <h2>登录管理控制台</h2>
+  {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+  <form method="post" action="/login">
+    <label>用户名<input name="username" autocomplete="username" required autofocus></label>
+    <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">登录</button>
+  </form>
+  <p class="hint">会话 8 小时有效，Cookie 仅 HttpOnly。</p>
+</div>
+</body>
+</html>{{end}}
