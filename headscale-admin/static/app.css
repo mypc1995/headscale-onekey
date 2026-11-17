@@ -388,6 +388,15 @@ code {
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 13px; align-items: end; }
 .form-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .form-label { font-size: .86rem; font-weight: 800; color: var(--text-secondary); letter-spacing: .02em; }
+/* 字段名旁的原始配置键，方便对照 YAML，但视觉上不抢主标题 */
+.form-label .key {
+  display: inline-block; margin-left: 7px; padding: 1px 6px; vertical-align: 1px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: .72rem; font-weight: 600; letter-spacing: 0;
+  color: var(--text-tertiary); background: var(--bg-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.field-hint { display: block; font-size: .84rem; line-height: 1.55; color: var(--text-tertiary); margin-top: 2px; }
 .form-input {
   width: 100%; padding: 9px 11px; background: var(--bg-secondary); color: var(--text-primary);
   border: var(--border-width) solid var(--border); border-radius: var(--radius-sm); outline: none;

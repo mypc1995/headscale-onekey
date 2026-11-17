@@ -47,20 +47,21 @@
     {{template "csrf" .}}
     <div class="form-grid">
       <div class="form-group span-2">
-        <label class="form-label" for="server_url">{{t .Lang "cfg.field.serverURL"}}</label>
+        <label class="form-label" for="server_url">{{t .Lang "cfg.field.serverURL"}}<span class="key">server_url</span></label>
         <input class="form-input{{if index .Data.Errors "server_url"}} invalid{{end}}" id="server_url" name="server_url" value="{{.Data.ServerURL}}" required placeholder="https://hs.example.com">
         {{with index .Data.Errors "server_url"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.serverURL"}}</span>
       </div>
       <div class="form-group">
-        <label class="form-label" for="base_domain">{{t .Lang "cfg.field.baseDomain"}}</label>
+        <label class="form-label" for="base_domain">{{t .Lang "cfg.field.baseDomain"}}<span class="key">dns.base_domain</span></label>
         <input class="form-input{{if index .Data.Errors "base_domain"}} invalid{{end}}" id="base_domain" name="base_domain" value="{{.Data.BaseDomain}}" required placeholder="hs.example.com">
         {{with index .Data.Errors "base_domain"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.baseDomain"}}</span>
       </div>
       <div class="form-group">
         <label class="check-label"><input class="form-checkbox" type="checkbox" name="magic_dns" {{if .Data.MagicDNS}}checked{{end}}> {{t .Lang "cfg.field.magicDNS"}}</label>
       </div>
     </div>
-    <p class="hint">{{t .Lang "cfg.hint.serverURL"}}<br>{{t .Lang "cfg.hint.baseDomain"}}</p>
     <div class="form-actions">
       <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
       <button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveDomain"}}</button>
@@ -74,32 +75,35 @@
     {{template "csrf" .}}
     <div class="form-grid">
       <div class="form-group">
-        <label class="form-label" for="listen_addr">{{t .Lang "cfg.field.listenAddr"}}</label>
+        <label class="form-label" for="listen_addr">{{t .Lang "cfg.field.listenAddr"}}<span class="key">listen_addr</span></label>
         <input class="form-input{{if index .Data.Errors "listen_addr"}} invalid{{end}}" id="listen_addr" name="listen_addr" value="{{.Data.ListenAddr}}" required placeholder="0.0.0.0:8080">
         {{with index .Data.Errors "listen_addr"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.listenAddr"}}</span>
       </div>
       <div class="form-group">
-        <label class="form-label" for="grpc_listen_addr">{{t .Lang "cfg.field.grpcAddr"}}</label>
+        <label class="form-label" for="grpc_listen_addr">{{t .Lang "cfg.field.grpcAddr"}}<span class="key">grpc_listen_addr</span></label>
         <input class="form-input{{if index .Data.Errors "grpc_listen_addr"}} invalid{{end}}" id="grpc_listen_addr" name="grpc_listen_addr" value="{{.Data.GRPCListenAddr}}" placeholder="127.0.0.1:50443">
         {{with index .Data.Errors "grpc_listen_addr"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.grpc"}}</span>
       </div>
       <div class="form-group">
-        <label class="form-label" for="metrics_listen_addr">{{t .Lang "cfg.field.metricsAddr"}}</label>
+        <label class="form-label" for="metrics_listen_addr">{{t .Lang "cfg.field.metricsAddr"}}<span class="key">metrics_listen_addr</span></label>
         <input class="form-input{{if index .Data.Errors "metrics_listen_addr"}} invalid{{end}}" id="metrics_listen_addr" name="metrics_listen_addr" value="{{.Data.MetricsListenAddr}}" placeholder="127.0.0.1:9090">
         {{with index .Data.Errors "metrics_listen_addr"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.metrics"}}</span>
       </div>
       <div class="form-group">
-        <label class="form-label" for="prefix_v4">{{t .Lang "cfg.field.prefixV4"}}</label>
+        <label class="form-label" for="prefix_v4">{{t .Lang "cfg.field.prefixV4"}}<span class="key">prefixes.v4</span></label>
         <input class="form-input{{if index .Data.Errors "prefix_v4"}} invalid{{end}}" id="prefix_v4" name="prefix_v4" value="{{.Data.PrefixV4}}" required placeholder="100.64.0.0/10">
         {{with index .Data.Errors "prefix_v4"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.prefix"}}</span>
       </div>
       <div class="form-group">
-        <label class="form-label" for="prefix_v6">{{t .Lang "cfg.field.prefixV6"}}</label>
+        <label class="form-label" for="prefix_v6">{{t .Lang "cfg.field.prefixV6"}}<span class="key">prefixes.v6</span></label>
         <input class="form-input{{if index .Data.Errors "prefix_v6"}} invalid{{end}}" id="prefix_v6" name="prefix_v6" value="{{.Data.PrefixV6}}" placeholder="fd7a:115c:a1e0::/48">
         {{with index .Data.Errors "prefix_v6"}}<span class="field-error">{{.}}</span>{{end}}
       </div>
     </div>
-    <p class="hint">{{t .Lang "cfg.hint.listenAddr"}}<br>{{t .Lang "cfg.hint.metrics"}}<br>{{t .Lang "cfg.hint.prefix"}}</p>
     <div class="form-actions">
       <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
       <button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveNetwork"}}</button>
@@ -138,55 +142,58 @@
           <option value="http" {{if eq .Data.TLSMode "http"}}selected{{end}}>{{t .Lang "cfg.mode.http"}}</option>
         </select>
         {{with index .Data.Errors "tls_mode"}}<span class="field-error">{{.}}</span>{{end}}
+        <span class="field-hint">{{t .Lang "cfg.hint.tlsMode"}}</span>
       </div>
     </div>
 
     <div class="tls-block" data-tls-mode="letsencrypt">
       <div class="form-grid">
         <div class="form-group">
-          <label class="form-label" for="tls_letsencrypt_hostname">{{t .Lang "cfg.field.leHost"}}</label>
+          <label class="form-label" for="tls_letsencrypt_hostname">{{t .Lang "cfg.field.leHost"}}<span class="key">tls_letsencrypt_hostname</span></label>
           <input class="form-input{{if index .Data.Errors "tls_letsencrypt_hostname"}} invalid{{end}}" id="tls_letsencrypt_hostname" name="tls_letsencrypt_hostname" value="{{.Data.LEHostname}}" placeholder="hs.example.com">
           {{with index .Data.Errors "tls_letsencrypt_hostname"}}<span class="field-error">{{.}}</span>{{end}}
+          <span class="field-hint">{{t .Lang "cfg.hint.leHost"}}</span>
         </div>
         <div class="form-group">
-          <label class="form-label" for="acme_email">{{t .Lang "cfg.field.acmeEmail"}}</label>
+          <label class="form-label" for="acme_email">{{t .Lang "cfg.field.acmeEmail"}}<span class="key">acme_email</span></label>
           <input class="form-input{{if index .Data.Errors "acme_email"}} invalid{{end}}" id="acme_email" name="acme_email" value="{{.Data.ACMEEmail}}" placeholder="admin@example.com">
           {{with index .Data.Errors "acme_email"}}<span class="field-error">{{.}}</span>{{end}}
+          <span class="field-hint">{{t .Lang "cfg.hint.acmeEmail"}}</span>
         </div>
         <div class="form-group">
-          <label class="form-label" for="tls_letsencrypt_challenge_type">{{t .Lang "cfg.field.challenge"}}</label>
+          <label class="form-label" for="tls_letsencrypt_challenge_type">{{t .Lang "cfg.field.challenge"}}<span class="key">tls_letsencrypt_challenge_type</span></label>
           <select class="form-input{{if index .Data.Errors "tls_letsencrypt_challenge_type"}} invalid{{end}}" id="tls_letsencrypt_challenge_type" name="tls_letsencrypt_challenge_type">
-            <option value="HTTP-01" {{if eq .Data.ChallengeType "HTTP-01"}}selected{{end}}>HTTP-01</option>
-            <option value="TLS-ALPN-01" {{if eq .Data.ChallengeType "TLS-ALPN-01"}}selected{{end}}>TLS-ALPN-01</option>
+            <option value="HTTP-01" {{if eq .Data.ChallengeType "HTTP-01"}}selected{{end}}>HTTP-01（通过 80 端口验证域名）</option>
+            <option value="TLS-ALPN-01" {{if eq .Data.ChallengeType "TLS-ALPN-01"}}selected{{end}}>TLS-ALPN-01（通过 443 端口验证域名）</option>
           </select>
           {{with index .Data.Errors "tls_letsencrypt_challenge_type"}}<span class="field-error">{{.}}</span>{{end}}
         </div>
         <div class="form-group">
-          <label class="form-label" for="tls_letsencrypt_listen">{{t .Lang "cfg.field.leListen"}}</label>
+          <label class="form-label" for="tls_letsencrypt_listen">{{t .Lang "cfg.field.leListen"}}<span class="key">tls_letsencrypt_listen</span></label>
           <input class="form-input{{if index .Data.Errors "tls_letsencrypt_listen"}} invalid{{end}}" id="tls_letsencrypt_listen" name="tls_letsencrypt_listen" value="{{.Data.LEListen}}" placeholder=":http">
           {{with index .Data.Errors "tls_letsencrypt_listen"}}<span class="field-error">{{.}}</span>{{end}}
         </div>
         <div class="form-group span-2">
-          <label class="form-label" for="tls_letsencrypt_cache_dir">{{t .Lang "cfg.field.cacheDir"}}</label>
+          <label class="form-label" for="tls_letsencrypt_cache_dir">{{t .Lang "cfg.field.cacheDir"}}<span class="key">tls_letsencrypt_cache_dir</span></label>
           <input class="form-input" id="tls_letsencrypt_cache_dir" name="tls_letsencrypt_cache_dir" value="{{.Data.LECacheDir}}" placeholder="/var/lib/headscale/cache">
         </div>
       </div>
-      <p class="hint">{{t .Lang "cfg.hint.leHost"}}<br>{{t .Lang "cfg.hint.acmeEmail"}}</p>
     </div>
 
     <div class="tls-block" data-tls-mode="manual">
       <div class="form-grid">
         <div class="form-group span-2">
-          <label class="form-label" for="tls_cert_path">{{t .Lang "cfg.field.certPath"}}</label>
-          <input class="form-input{{if index .Data.Errors "tls_cert_path"}} invalid{{end}}" id="tls_cert_path" name="tls_cert_path" value="{{.Data.CertPath}}" placeholder="/etc/letsencrypt/live/hs.example.com/fullchain.pem">
-          {{with index .Data.Errors "tls_cert_path"}}<span class="field-error">{{.}}</span>{{end}}
+          <label class="form-label" for="tls_cert_pem">{{t .Lang "cfg.field.certPEM"}}</label>
+          <textarea class="form-input{{if index .Data.Errors "cert_pem"}} invalid{{end}}" id="tls_cert_pem" name="tls_cert_pem" rows="6" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE-----&#10;MIIF...&#10;-----END CERTIFICATE-----"></textarea>
+          {{with index .Data.Errors "cert_pem"}}<span class="field-error">{{.}}</span>{{end}}
         </div>
         <div class="form-group span-2">
-          <label class="form-label" for="tls_key_path">{{t .Lang "cfg.field.keyPath"}}</label>
-          <input class="form-input{{if index .Data.Errors "tls_key_path"}} invalid{{end}}" id="tls_key_path" name="tls_key_path" value="{{.Data.KeyPath}}" placeholder="/etc/letsencrypt/live/hs.example.com/privkey.pem">
-          {{with index .Data.Errors "tls_key_path"}}<span class="field-error">{{.}}</span>{{end}}
+          <label class="form-label" for="tls_key_pem">{{t .Lang "cfg.field.keyPEM"}}</label>
+          <textarea class="form-input{{if index .Data.Errors "key_pem"}} invalid{{end}}" id="tls_key_pem" name="tls_key_pem" rows="6" spellcheck="false" autocomplete="off" placeholder="-----BEGIN PRIVATE KEY-----&#10;MIIE...&#10;-----END PRIVATE KEY-----"></textarea>
+          {{with index .Data.Errors "key_pem"}}<span class="field-error">{{.}}</span>{{end}}
         </div>
       </div>
+      {{if .Data.CertPath}}<div class="notice">{{icon "file" 17}}<span>{{t .Lang "cfg.hint.manualCurrent"}}：<code class="mono">{{.Data.CertPath}}</code></span></div>{{end}}
       <p class="hint">{{t .Lang "cfg.hint.manual"}}</p>
     </div>
 
@@ -194,7 +201,7 @@
       <div class="notice warn">{{icon "x" 17}}<span>{{t .Lang "cfg.err.httpsNoCert"}}</span></div>
     </div>
 
-    <p class="hint">{{t .Lang "cfg.hint.tlsMode"}}<br>{{t .Lang "cfg.hint.apply"}}</p>
+    <p class="hint">{{t .Lang "cfg.hint.apply"}}</p>
     <div class="form-actions">
       <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
       <button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveTLS"}}</button>

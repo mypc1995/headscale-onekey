@@ -117,9 +117,12 @@ curl -s -b "$JAR" "$BASE/" | grep -q 'id="theme-dropdown"' && ok "主题切换�
 
 info "验证 Headscale 配置页"
 curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings.html"
-for kw in '域名与接入' 'IP 与监听' 'SSL 证书' '证书自动更新'; do
+for kw in '域名与访问地址' '端口与网段' 'HTTPS 证书' '证书自动更新' '客户端连接端口' '手动粘贴已有证书'; do
   grep -q "$kw" "$TMPDIR/settings.html" && ok "配置页包含「$kw」" || fail "配置页缺少「$kw」"
 done
+grep -q 'class="key">listen_addr<' "$TMPDIR/settings.html" && ok "字段旁标注原始配置键" || fail "缺少原始配置键标注"
+grep -q 'name="tls_cert_pem"' "$TMPDIR/settings.html" && ok "手动证书为粘贴文本框" || fail "手动证书不是文本框"
+grep -q 'name="tls_cert_path"' "$TMPDIR/settings.html" && fail "手动证书仍在填写路径" || ok "手动证书不再要求填写路径"
 grep -q 'value="http://127.0.0.1:8080"' "$TMPDIR/settings.html" && ok "配置页回显 server_url" || fail "配置页未回显 server_url"
 CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/settings.html" | head -1 | sed 's/.*value="//;s/"//')"
 
@@ -133,8 +136,21 @@ grep -q '100.64.0.0/10' "$TMPDIR/e2.html" && ok "越界 IPv4 段被拦截" || fa
 
 curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
   -d "csrf=${CSRF}&tls_mode=letsencrypt&tls_letsencrypt_hostname=&acme_email=bad&tls_letsencrypt_challenge_type=HTTP-01&tls_letsencrypt_listen=:http&tls_letsencrypt_cache_dir=/var/lib/headscale/cache" -o "$TMPDIR/e3.html"
-grep -q 'ACME 证书域名不能为空' "$TMPDIR/e3.html" && ok "缺少证书域名被拦截" || fail "缺少证书域名未被拦截"
+grep -q '证书域名不能为空' "$TMPDIR/e3.html" && ok "缺少证书域名被拦截" || fail "缺少证书域名未被拦截"
 grep -q '邮箱格式不正确' "$TMPDIR/e3.html" && ok "非法邮箱被拦截" || fail "非法邮箱未被拦截"
+
+curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+  --data-urlencode "csrf=${CSRF}" --data-urlencode "tls_mode=manual" \
+  --data-urlencode "tls_cert_pem=这是一个证书" --data-urlencode "tls_key_pem=这是一个私钥" \
+  -o "$TMPDIR/e4.html"
+grep -q '不像 PEM 文本' "$TMPDIR/e4.html" && ok "非 PEM 的粘贴内容被拦截" || fail "非 PEM 内容未被拦截"
+
+curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+  --data-urlencode "csrf=${CSRF}" --data-urlencode "tls_mode=manual" \
+  --data-urlencode "tls_cert_pem=-----BEGIN CERTIFICATE-----
+MIIB
+-----END CERTIFICATE-----" --data-urlencode "tls_key_pem=" -o "$TMPDIR/e5.html"
+grep -q '成对粘贴' "$TMPDIR/e5.html" && ok "证书私钥缺一被拦截" || fail "缺一项未被拦截"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   code="$(curl -s -b "$JAR" -X POST "$BASE/settings/domain" \

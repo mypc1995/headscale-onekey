@@ -527,7 +527,7 @@ func (a *App) settingsDomain(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, "settings", p)
 		return
 	}
-	a.applySettings(w, r, p, next, "cfg.msg.domainSaved")
+	a.applySettings(w, r, p, next, "cfg.msg.domainSaved", nil)
 }
 
 // settingsNetwork 保存监听地址与客户端地址段。
@@ -562,24 +562,45 @@ func (a *App) settingsNetwork(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, "settings", p)
 		return
 	}
-	a.applySettings(w, r, p, next, "cfg.msg.networkSaved")
+	a.applySettings(w, r, p, next, "cfg.msg.networkSaved", nil)
 }
 
-// settingsTLS 保存证书模式、ACME 参数或手动证书路径。
+// formField 判断字段是否真的随请求提交。隐藏的证书分区可能不提交某些字段，
+// 这时应沿用已有值，而不是把它们清空。
+func formField(r *http.Request, key string) (string, bool) {
+	if _, ok := r.Form[key]; !ok {
+		return "", false
+	}
+	return strings.TrimSpace(r.Form.Get(key)), true
+}
+
+// settingsTLS 保存证书方式。手动方式接收用户粘贴的证书与私钥文本，
+// 校验通过后写入固定位置，再交给 headscale 配置使用。
 func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
+	_ = r.ParseForm()
 	lang := langFrom(r)
 	p := a.hs.loadConfigPage(lang)
 	p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
-	p.ACMEEmail = strings.TrimSpace(r.FormValue("acme_email"))
-	p.ACMEURL = strings.TrimSpace(r.FormValue("acme_url"))
-	p.ChallengeType = strings.TrimSpace(r.FormValue("tls_letsencrypt_challenge_type"))
-	p.LEListen = strings.TrimSpace(r.FormValue("tls_letsencrypt_listen"))
-	p.LECacheDir = strings.TrimSpace(r.FormValue("tls_letsencrypt_cache_dir"))
-	p.CertPath = strings.TrimSpace(r.FormValue("tls_cert_path"))
-	p.KeyPath = strings.TrimSpace(r.FormValue("tls_key_path"))
+	if v, ok := formField(r, "acme_email"); ok {
+		p.ACMEEmail = v
+	}
+	if v, ok := formField(r, "acme_url"); ok && v != "" {
+		p.ACMEURL = v
+	}
+	if v, ok := formField(r, "tls_letsencrypt_challenge_type"); ok && v != "" {
+		p.ChallengeType = v
+	}
+	if v, ok := formField(r, "tls_letsencrypt_listen"); ok && v != "" {
+		p.LEListen = v
+	}
+	if v, ok := formField(r, "tls_letsencrypt_cache_dir"); ok && v != "" {
+		p.LECacheDir = v
+	}
+	p.CertPEM = strings.TrimSpace(r.FormValue("tls_cert_pem"))
+	p.KeyPEM = strings.TrimSpace(r.FormValue("tls_key_pem"))
 	host := strings.TrimSpace(r.FormValue("tls_letsencrypt_hostname"))
 
 	switch p.TLSMode {
@@ -587,6 +608,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		p.LEHostname = host
 		p.CertPath, p.KeyPath = "", ""
 	case "manual":
+		// 沿用已配置的证书路径；粘贴了新内容会在下面覆盖。
 		p.LEHostname = ""
 	case "http":
 		p.LEHostname, p.CertPath, p.KeyPath = "", "", ""
@@ -596,29 +618,45 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if errs := validateTLS(p, lang); len(errs) > 0 {
-		// 保留用户输入用于回显（清空动作只在通过校验后生效）。
-		if p.TLSMode == "letsencrypt" {
-			p.LEHostname = host
-		}
-		p.Cert = inspectCert(&ConfigPage{CertPath: r.FormValue("tls_cert_path"), KeyPath: r.FormValue("tls_key_path"), LEHostname: host, LECacheDir: p.LECacheDir})
 		p.Errors = errs
+		p.Warnings = configWarnings(p, lang)
 		a.render(w, r, "settings", p)
 		return
 	}
+
+	// 只有手动方式且确实粘贴了内容时才落盘，避免空提交覆盖已有证书。
+	rollback := func() {}
+	if p.TLSMode == "manual" && p.CertPEM != "" {
+		certPath, keyPath, undo, err := saveManualCert(p.CertPEM, p.KeyPEM)
+		if err != nil {
+			p.Errors = map[string]string{"cert_pem": tr(lang, "cfg.err.certSave", err.Error())}
+			p.Warnings = configWarnings(p, lang)
+			a.render(w, r, "settings", p)
+			return
+		}
+		p.CertPath, p.KeyPath, rollback = certPath, keyPath, undo
+	}
+
 	next, err := a.hs.buildConfig(p, "tls")
 	if err != nil {
+		rollback()
 		p.Errors = map[string]string{"tls_mode": err.Error()}
+		p.Warnings = configWarnings(p, lang)
 		a.render(w, r, "settings", p)
 		return
 	}
-	a.applySettings(w, r, p, next, "cfg.msg.tlsSaved")
+	a.applySettings(w, r, p, next, "cfg.msg.tlsSaved", rollback)
 }
 
-func (a *App) applySettings(w http.ResponseWriter, r *http.Request, p *ConfigPage, next, successKey string) {
+// applySettings 应用配置文本；失败时调用 rollback（可为 nil）撤销附带副作用。
+func (a *App) applySettings(w http.ResponseWriter, r *http.Request, p *ConfigPage, next, successKey string, rollback func()) {
 	lang := langFrom(r)
 	restart := r.FormValue("apply_now") == "on"
 	bak, err := a.hs.ApplyConfig(next, restart, lang)
 	if err != nil {
+		if rollback != nil {
+			rollback()
+		}
 		p.Errors = map[string]string{"_form": err.Error()}
 		p.Warnings = configWarnings(p, lang)
 		fresh := a.hs.loadConfigPage(lang)

@@ -40,8 +40,12 @@ type ConfigPage struct {
 	ChallengeType string
 	LEListen      string
 	LECacheDir    string
-	CertPath      string
-	KeyPath       string
+	CertPath      string // 写入 headscale 配置的 tls_cert_path
+	KeyPath       string // 写入 headscale 配置的 tls_key_path
+
+	// 手动证书：用户直接粘贴的 PEM 文本，仅在本次请求内使用，不回显、不落库
+	CertPEM string
+	KeyPEM  string
 
 	Cert CertInfo
 	Renew RenewInfo
@@ -122,6 +126,9 @@ func (c *HSClient) loadConfigPage(lang string) *ConfigPage {
 		p.TLSMode = "http"
 	}
 	p.Cert = inspectCert(p)
+	if p.Cert.Problem != "" {
+		p.Cert.Problem = certProblemText(p.Cert.Problem, lang)
+	}
 	p.Renew = inspectRenew(p)
 	p.Warnings = append(p.Warnings, configWarnings(p, lang)...)
 	return p
@@ -222,6 +229,21 @@ func inspectCert(p *ConfigPage) CertInfo {
 		}
 	}
 	return info
+}
+
+// certProblemText 把内部证书异常码翻成用户能看懂的说明。
+func certProblemText(code, lang string) string {
+	switch code {
+	case "cert-path-empty":
+		return tr(lang, "cfg.problem.empty")
+	case "unreadable":
+		return tr(lang, "cfg.problem.unreadable")
+	case "not-pem":
+		return tr(lang, "cfg.problem.notPEM")
+	case "parse":
+		return tr(lang, "cfg.problem.parse")
+	}
+	return code
 }
 
 func certbotBinary() string {
@@ -494,32 +516,120 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 			e["tls_letsencrypt_listen"] = tr(lang, "cfg.err.addrRequired")
 		}
 	case "manual":
-		if p.CertPath == "" {
-			e["tls_cert_path"] = tr(lang, "cfg.err.certRequired")
-		} else if !filepath.IsAbs(p.CertPath) {
-			e["tls_cert_path"] = tr(lang, "cfg.err.pathAbs")
-		} else if !fileExists(p.CertPath) {
-			e["tls_cert_path"] = tr(lang, "cfg.err.certMissing")
-		}
-		if p.KeyPath == "" {
-			e["tls_key_path"] = tr(lang, "cfg.err.keyRequired")
-		} else if !filepath.IsAbs(p.KeyPath) {
-			e["tls_key_path"] = tr(lang, "cfg.err.pathAbs")
-		} else if !fileExists(p.KeyPath) {
-			e["tls_key_path"] = tr(lang, "cfg.err.keyMissing")
-		}
-		if _, ok := e["tls_cert_path"]; !ok {
-			if _, ok := e["tls_key_path"]; !ok {
-				if _, err := tls.LoadX509KeyPair(p.CertPath, p.KeyPath); err != nil {
-					e["tls_cert_path"] = tr(lang, "cfg.err.pairMismatch")
-				}
+		if p.CertPEM == "" && p.KeyPEM == "" {
+			// 没有重新粘贴：沿用服务器上已有的证书文件，但必须真实可用。
+			if p.CertPath == "" || p.KeyPath == "" {
+				e["cert_pem"] = tr(lang, "cfg.err.certRequired")
+			} else if !fileExists(p.CertPath) || !fileExists(p.KeyPath) {
+				e["cert_pem"] = tr(lang, "cfg.err.certStale")
+			} else if _, err := tls.LoadX509KeyPair(p.CertPath, p.KeyPath); err != nil {
+				e["cert_pem"] = tr(lang, "cfg.err.pairMismatch")
 			}
+		} else if field, code := checkPastedPair(p.CertPEM, p.KeyPEM); code != "" {
+			e[field] = tr(lang, code)
 		}
 	case "http":
 	default:
 		e["tls_mode"] = tr(lang, "cfg.err.tlsMode")
 	}
 	return e
+}
+
+// ---------- 手动粘贴证书 ----------
+
+// manualCertDir 是手动粘贴证书的固定落盘位置，headscale 进程要能读到。
+const manualCertDir = "/etc/headscale/certs"
+
+// checkPastedPair 校验粘贴的证书与私钥文本，返回出错字段与 i18n 键；通过时两者都为空。
+func checkPastedPair(certPEM, keyPEM string) (field, code string) {
+	if certPEM == "" || keyPEM == "" {
+		return "cert_pem", "cfg.err.pasteBoth"
+	}
+	cb, _ := pem.Decode([]byte(certPEM))
+	if cb == nil || cb.Type != "CERTIFICATE" {
+		return "cert_pem", "cfg.err.certPEM"
+	}
+	if _, err := x509.ParseCertificate(cb.Bytes); err != nil {
+		return "cert_pem", "cfg.err.certParse"
+	}
+	kb, _ := pem.Decode([]byte(keyPEM))
+	if kb == nil {
+		return "key_pem", "cfg.err.keyPEM"
+	}
+	if !parsesPrivateKey(kb.Bytes) {
+		return "key_pem", "cfg.err.keyParse"
+	}
+	if _, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM)); err != nil {
+		return "cert_pem", "cfg.err.pairMismatch"
+	}
+	return "", ""
+}
+
+func parsesPrivateKey(der []byte) bool {
+	if _, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return true
+	}
+	if _, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		return true
+	}
+	if _, err := x509.ParseECPrivateKey(der); err == nil {
+		return true
+	}
+	return false
+}
+
+// saveManualCert 把粘贴的证书文本写入 manualCertDir，返回写入后的路径与回滚函数。
+// 配置最终没能应用时，调用方用回滚函数还原旧文件。
+func saveManualCert(certPEM, keyPEM string) (certPath, keyPath string, rollback func(), err error) {
+	if err := os.MkdirAll(manualCertDir, 0755); err != nil {
+		return "", "", func() {}, err
+	}
+	certPath = filepath.Join(manualCertDir, "manual.crt")
+	keyPath = filepath.Join(manualCertDir, "manual.key")
+	rollback, err = writeCertFiles(map[string]string{certPath: certPEM, keyPath: keyPEM})
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	return certPath, keyPath, rollback, nil
+}
+
+// writeCertFiles 以 0600 写入 PEM 文件并 chown 给 headscale，返回可还原旧文件的回滚函数。
+func writeCertFiles(files map[string]string) (func(), error) {
+	type prevFile struct {
+		path string
+		data []byte
+		mode os.FileMode
+		ok   bool
+	}
+	var prev []prevFile
+	restore := func() {
+		for _, f := range prev {
+			if f.ok {
+				_ = os.WriteFile(f.path, f.data, f.mode)
+			} else {
+				_ = os.Remove(f.path)
+			}
+		}
+	}
+	for path, body := range files {
+		f := prevFile{path: path}
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			if b, err := os.ReadFile(path); err == nil {
+				f.data, f.mode, f.ok = b, st.Mode().Perm(), true
+			}
+		}
+		prev = append(prev, f)
+		if !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			restore()
+			return func() {}, err
+		}
+	}
+	// headscale 以 headscale 用户运行，证书必须让它可读（失败时保留 root 属主，仅影响排查提示）。
+	_ = exec.Command("chown", "-R", "headscale:headscale", manualCertDir).Run()
+	return restore, nil
 }
 
 func configWarnings(p *ConfigPage, lang string) []string {
