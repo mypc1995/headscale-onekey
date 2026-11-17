@@ -1,7 +1,7 @@
 headscale-onekey
 ================
 
-本项目脚本与文档：MIT License，见 LICENSE。
+本项目脚本、文档与管理界面源码：MIT License，见 LICENSE。
 
 第三方组件
 ----------
@@ -10,16 +10,12 @@ Headscale
   项目地址：https://github.com/juanfont/headscale
   本项目仅通过官方 release 下载并使用其二进制与配置示例，未修改或重新分发其源码。
 
-HeadControl
-  项目地址：https://github.com/ahmadzip/HeadControl
-  固定提交：cfdfc63c766af3658851ef766bd84ab678fe005a
-  说明：HeadControl 上游仓库目前未声明许可证。本项目不分发 HeadControl 源码，
-  仅提供针对上述固定提交的本地化补丁 headcontrol-zh.patch。部署脚本会在运行时
-  从上游仓库拉取源码并应用该补丁。使用者应自行确认是否符合上游项目的授权要求。
+Headscale Admin（headscale-admin/）为本项目自研代码，随本仓库以 MIT License 发布，
+不依赖 HeadControl、Node 运行时或任何未声明许可证的第三方项目。
 
-汉化补丁
+历史说明
 --------
 
-headcontrol-zh.patch 由本项目基于 HeadControl 固定提交制作，包含界面与提示文案的中文替换，
-以及可选的 HTTP Basic Auth 中间件。该补丁不属于本仓库 MIT License 的授权范围；
-其使用受上游项目权利状态约束。
+早期版本曾附带社区项目 HeadControl 的本地化补丁（headcontrol-zh.patch）。随着管理功能
+由 Headscale Admin 完整覆盖，该补丁与本仓库一并删除，不再分发，也不在现行授权范围内。
+旧版本内容可在 git 提交记录中查看。

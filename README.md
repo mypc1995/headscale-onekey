@@ -1,6 +1,6 @@
 # headscale-onekey
 
-一键部署私有 [Headscale](https://github.com/juanfont/headscale) 控制服务器，可选择部署社区项目 HeadControl，或本项目的全量管理界面 Headscale Admin（支持中英文、多套配色与实时网速）。
+一键部署私有 [Headscale](https://github.com/juanfont/headscale) 控制服务器，附带自研的全量管理界面 Headscale Admin（Go 单二进制，支持中英文、多套配色、实时网速与网页端配置管理）。
 
 面向 Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora，支持 x86_64 与 aarch64。已在 WSL Ubuntu 与 AlmaLinux 9 实机验证；当前脚本按 Headscale v0.29.7 的配置格式编写。
 
@@ -14,22 +14,17 @@
 - 自动生成 MagicDNS `base_domain`，避免与 `server_url` 域名冲突。
 - 内置 `configtest` 配置自检，失败即终止；成功后修正数据目录属主。
 - 自动创建默认用户与 24 小时预授权密钥。
-- 可选部署 HeadControl，默认直接开放 3000 端口，并自动完成 API key 初始化。
-- HeadControl 默认启用 HTTP Basic Auth：未指定密码时自动生成，凭据以带盐摘要存入仅 root 可读的 systemd 环境文件。
-- HeadControl 默认应用中文补丁：页面、菜单、按钮、前端提示、后端 toast 与错误信息均已汉化。
-- 可选部署 Headscale Admin：中英文一键切换、14 套配色主题、实时网卡流量曲线、完整账号与权限体系。
+- 部署 Headscale Admin 管理界面：中英文一键切换、14 套配色主题、实时网卡流量曲线、完整账号与权限体系，域名/IP/SSL 证书可直接在网页端配置。
 
 ## 目录结构
 
 | 文件 | 说明 |
 | --- | --- |
 | `deploy-headscale.sh` | Headscale 一键部署 |
-| `deploy-headcontrol.sh` | HeadControl 一键部署与汉化 |
-| `headcontrol-zh.patch` | HeadControl 中文补丁，针对固定上游提交 |
-| `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
 | `deploy-headscale-admin.sh` | 全量管理界面一键部署（默认 3001） |
 | `headscale-admin/` | 全量管理界面 Go 源码、模板与静态资源 |
-| `test-headcontrol-patch.sh` | 汉化补丁、Basic Auth 应用与编译验证 |
+| `remove-headcontrol.sh` | 从旧版本升级时清理 HeadControl（3000），释放端口 |
+| `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
 | `test-headscale-admin.sh` | 全量管理界面编译、登录、双语、主题、网速、配置校验与 CSRF 验证 |
 
 ## 快速开始
@@ -75,35 +70,9 @@ sudo bash deploy-headscale.sh -u https://hs.example.com \
 
 部署后可用 `headscale-cert status|renew|reload` 查看和管理证书。注意：v0.29.x 的 SIGHUP 只重载 ACL，不重载 TLS 证书；证书更新请使用 `renew` 或重启服务。
 
-### 2. 部署 HeadControl 中文管理界面
+### 2. 部署管理界面（Headscale Admin）
 
-```bash
-sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080
-```
-
-默认直接放行 TCP/3000，浏览器访问 `http://<服务器IP>:3000` 会弹出登录框。未指定密码时会交互输入；非交互执行则自动生成随机密码并在结束时打印一次，同时保存到 `/root/.headcontrol-auth`（0600）。密码哈希与盐写入 `/etc/headcontrol/auth.env`（0600），明文不出现在 systemd unit 中。
-
-自定义账号：
-
-```bash
-sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
-  --auth-user ops --auth-pass 'YourStrongPassword'
-```
-
-如需限制来源：
-
-```bash
-sudo bash deploy-headcontrol.sh --hs-url http://127.0.0.1:18080 \
-  --allow-cidr 192.168.1.0/24
-```
-
-可选参数：`--port 3000`、`--no-firewall`、`--no-zh`（使用原版英文界面）、`--no-auth`（关闭密码保护，不推荐）。
-
-注意：HTTP Basic Auth 在明文 HTTP 下凭据只是 Base64 编码，公网使用应配合 HTTPS 或至少用 `--allow-cidr` 限制来源。
-
-### 3. 部署全量管理界面（Headscale Admin）
-
-HeadControl 比较轻量。如果需要完整管理界面，可部署本项目的 `headscale-admin`：Go 单二进制，中英文界面，默认跑在 3001，可与 3000 的 HeadControl 并行。
+Go 单二进制，中英文界面，默认监听 3001，内置账号体系，不需要额外装 Node 或 Python。
 
 ```bash
 sudo bash deploy-headscale-admin.sh --port 3001
@@ -194,20 +163,27 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
-bash test-headcontrol-patch.sh    # 验证汉化补丁、Basic Auth 与 Go 编译（需 git/go/gcc/curl/openssl）
 bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、配置校验与 CSRF（需 go/curl）
 ```
 
 ## 安全提示
 
-- HeadControl 默认启用 Basic Auth，但 HTTP 下凭据仍是 Base64 明文；生产环境建议配合 HTTPS、反向代理认证或网络 ACL。可用 `--no-auth` 显式关闭，但不推荐。
+- 管理界面走独立账号体系，密码经 PBKDF2 加盐摘要保存，登录态为 HttpOnly Cookie；HTTP 模式下传输仍是明文，公网使用请配合 HTTPS 或 `--allow-cidr` 限制来源。
 - HTTP 模式为明文，较新的 Tailscale 客户端可能需要设置 `TS_ALLOW_HTTP_CONTROL_SERVER=1`。
 - HTTPS 模式需要域名正确解析到本机，并确保 80（证书验证）和 443（服务）端口可达。
 - 启用内置 DERP 时需放行 UDP/3478。
-- HeadControl 是社区项目，不是 Headscale 官方组件。
+
+## 从旧版本升级
+
+早期版本额外部署过社区项目 HeadControl（3000 端口）。现在管理功能已全部由 Headscale Admin 覆盖，不需要再保留两套界面：
+
+```bash
+sudo bash remove-headcontrol.sh          # 停服务、删程序/数据、放开 3000、清理防火墙规则
+sudo bash remove-headcontrol.sh --keep-data   # 保留 /var/lib/headcontrol
+```
+
+脚本只清理 HeadControl，不动 Headscale、Headscale Admin 与 `/etc/headscale/config.yaml`。历史版本仍可在 git 提交记录中找回。
 
 ## 许可证
 
-本仓库中的脚本与文档采用 [MIT License](LICENSE)。
-
-`headcontrol-zh.patch` 是面向第三方项目 HeadControl 的本地化补丁。HeadControl 上游仓库目前未声明许可证，本仓库不分发其源码；是否使用该补丁由使用者自行判断，使用时请同时尊重上游项目的权利声明。详见 [NOTICE](NOTICE)。
+本仓库中的脚本、文档与管理界面源码采用 [MIT License](LICENSE)。详见 [NOTICE](NOTICE)。

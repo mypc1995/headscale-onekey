@@ -3,7 +3,7 @@
 # Headscale Admin 部署脚本（Go 单二进制，完整管理界面）
 # ------------------------------------------------------------------
 # 功能：编译安装 -> 初始化管理员 -> systemd -> 防火墙 -> 启动
-# 默认端口：3001（与现有 HeadControl 的 3000 并行，不冲突）
+# 默认端口：3001
 # 说明：以 root 运行，因为需要调用 headscale CLI、读写 /etc/headscale 与 journalctl
 #
 set -euo pipefail
@@ -205,7 +205,7 @@ fi
 cat <<EOF
 ============
 说明：
-  - 本服务与 HeadControl (3000) 并行运行，互不影响
+  - 访问地址：http://<服务器IP>:<端口>，账号密码见上方
   - 支持：总览、节点、用户、密钥与接入、网络与策略、运维监控、管理员
   - 修改配置/ACL 会自动备份原文件并做 configtest 校验
   - 停止服务：systemctl stop headscale-admin
