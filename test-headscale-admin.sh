@@ -253,6 +253,20 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   [[ "$code" == "303" ]] && ok "合法域名配置保存成功" || fail "合法配置保存失败 (${code})"
   grep -q '^server_url: http://127.0.0.1:8080' "$TMPDIR/config.yaml" && ok "配置已写入文件" || fail "配置未写入"
   ls "$TMPDIR"/config.yaml.bak.* >/dev/null 2>&1 && ok "原配置已备份" || fail "未生成备份"
+
+  info "验证 IPv6 开关真的作用到配置文件"
+  # 打开开关：配置里应写入 prefixes.v6。
+  curl -s -b "$JAR" -X POST "$BASE/settings/network" \
+    -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&ipv6_enabled=on&prefix_v6=fd7a:115c:a1e0::/48" -o /dev/null
+  grep -q '^  v6: fd7a:115c:a1e0::/48$' "$TMPDIR/config.yaml" && ok "打开开关后 prefixes.v6 已写入配置文件" || fail "打开开关后 prefixes.v6 未写入配置文件"
+  # 关掉开关：配置里的 prefixes.v6 必须消失，而不是留着旧值继续分配 IPv6。
+  curl -s -b "$JAR" -X POST "$BASE/settings/network" \
+    -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&prefix_v6=" -o /dev/null
+  grep -q '^  v6:' "$TMPDIR/config.yaml" && fail "关掉开关后 prefixes.v6 仍留在配置文件里（开关无效）" || ok "关掉开关后 prefixes.v6 已从配置文件移除"
+  grep -q '^  v4: 100.64.0.0/10$' "$TMPDIR/config.yaml" && ok "关掉 IPv6 没有损坏 IPv4 网段" || fail "关掉 IPv6 时 IPv4 网段被弄坏"
+  # 页面回读：开关勾选状态要跟着配置文件走。
+  curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings2.html"
+  grep 'id="ipv6_enabled"' "$TMPDIR/settings2.html" | grep -q 'checked' && fail "关掉开关后页面仍显示已勾选" || ok "关掉开关后页面显示未勾选"
 else
   info "非 Linux 环境无法执行 headscale configtest，跳过写入链路（由远程测试覆盖）"
 fi

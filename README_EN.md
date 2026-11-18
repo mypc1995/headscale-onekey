@@ -130,7 +130,7 @@ Common Headscale settings are consolidated into the web UI so you don't have to 
 
 Duplicate ports within the same form are rejected outright. A warning appears when the `server_url` port differs from the listen port, preventing lockouts when changing ports.
 
-IPv6 is disabled by default; when the toggle is off, `prefixes.v6` is not written (rather than keeping the previous value). Prefixes are only validated as CIDR — final legality is delegated to `headscale configtest`, so the admin UI never rejects a valid config by being stricter than headscale. Some cloud providers (e.g. Alibaba Cloud ECS) occupy the 100.x range themselves, which conflicts with device virtual addresses; pick any valid range in that case (e.g. `10.99.0.0/24`). Note that changing prefixes only affects devices that join **afterwards** — existing node IPs stay the same.
+IPv6 is disabled by default. When the toggle is off, any existing `prefixes.v6` line is **removed from the config file** (keeping it would make headscale keep handing out IPv6 addresses); when the toggle is on, the given prefix is written back. Prefixes are only validated as CIDR — final legality is delegated to `headscale configtest`, so the admin UI never rejects a valid config by being stricter than headscale. Some cloud providers (e.g. Alibaba Cloud ECS) occupy the 100.x range themselves, which conflicts with device virtual addresses; pick any valid range in that case (e.g. `10.99.0.0/24`). Note that changing prefixes only affects devices that join **afterwards** — existing node IPs stay the same.
 
 **Node speed reporting**
 
@@ -272,7 +272,7 @@ Read-only checks can run on any Linux (including WSL) without creating users, wr
 
 ```bash
 bash test-headscale-cli.sh        # CLI commands, config keys, and configtest
-bash test-headscale-admin.sh      # Admin UI build, login, i18n, themes, bandwidth, host & node monitoring, config validation, IPv6 toggle, network forms, CSRF (requires go/curl)
+bash test-headscale-admin.sh      # Admin UI build, login, i18n, themes, bandwidth, host & node monitoring, config validation, IPv6 toggle (incl. config-file write-through), network forms, CSRF (requires go/curl)
 (cd headscale-admin && go test ./...)   # Unit tests for config parsing, admin UI TLS certificates, node mapping, i18n rendering, and alert rules
 ```
 

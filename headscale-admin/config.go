@@ -734,6 +734,24 @@ func setNestedKey(content, block, key, value string) (string, error) {
 	return content[:loc[4]] + inner + content[loc[5]:], nil
 }
 
+// deleteNestedKey 从嵌套块里删掉某个键。块或键不存在时原样返回。
+//
+// 「IPv6 开关」要用它：关掉开关时如果只是不写，配置里原来的 prefixes.v6
+// 会原样留着，headscale 仍然按 IPv6 网段分配地址，这个开关等于没开。
+func deleteNestedKey(content, block, key string) string {
+	re := regexp.MustCompile(`(?ms)(^` + regexp.QuoteMeta(block) + `:[ \t]*\n)((?:[ \t]+.*\n?)*)`)
+	loc := re.FindStringSubmatchIndex(content)
+	if loc == nil {
+		return content
+	}
+	inner := content[loc[4]:loc[5]]
+	kr := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:[^\n]*\n?`)
+	if !kr.MatchString(inner) {
+		return content
+	}
+	return content[:loc[4]] + kr.ReplaceAllLiteralString(inner, "") + content[loc[5]:]
+}
+
 // buildConfig 基于当前文件内容生成本次提交的完整配置文本。
 func (c *HSClient) buildConfig(p *ConfigPage, section string) (string, error) {
 	b, err := c.ReadConfigText()
@@ -765,6 +783,10 @@ func (c *HSClient) buildConfig(p *ConfigPage, section string) (string, error) {
 			if next, err = setNestedKey(next, "prefixes", "v6", yamlScalar(p.PrefixV6)); err != nil {
 				return "", err
 			}
+		} else {
+			// 开关关掉要把 prefixes.v6 从配置里删掉，而不是留着旧值：
+			// 留着的话 headscale 仍然按 IPv6 网段分配地址，这个开关等于没开。
+			next = deleteNestedKey(next, "prefixes", "v6")
 		}
 	case "tls":
 		next = setTopKey(next, "acme_email", yamlScalar(p.ACMEEmail))

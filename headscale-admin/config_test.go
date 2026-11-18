@@ -7,6 +7,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -166,5 +168,76 @@ func TestSetDeepKey(t *testing.T) {
 	}
 	if !strings.Contains(next, "server:") || !strings.Contains(next, "enabled: true") || !strings.Contains(next, "urls: []") {
 		t.Fatalf("add mid block:\n%s", next)
+	}
+}
+
+// TestBuildConfigIPv6Toggle 验证「启用 IPv6 网段」开关两个方向都真的落到配置里。
+//
+// 这条守着「这个选项无效」那个缺陷：开关关掉时如果只是「不写」，
+// 配置里原来的 prefixes.v6 会原样留着，headscale 仍然按 IPv6 网段分配地址，
+// 开关等于没开；页面重新加载时又变回勾选状态，看着就像选项没用。
+func TestBuildConfigIPv6Toggle(t *testing.T) {
+	base := "server_url: http://x:8080\n" +
+		"listen_addr: 0.0.0.0:8080\n" +
+		"metrics_listen_addr: 127.0.0.1:9090\n" +
+		"grpc_listen_addr: 127.0.0.1:50443\n" +
+		"prefixes:\n" +
+		"  v4: 100.64.0.0/10\n" +
+		"  v6: fd7a:115c:a1e0::/48\n"
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := &HSClient{Config: path}
+	p := &ConfigPage{
+		ListenAddr:        "0.0.0.0:8080",
+		MetricsListenAddr: "127.0.0.1:9090",
+		GRPCListenAddr:    "127.0.0.1:50443",
+		PrefixV4:          "100.64.0.0/10",
+	}
+
+	// 打开开关：把新的 IPv6 网段写进配置。
+	p.PrefixV6 = "fd7a:115c:a1e0::/48"
+	next, err := c.buildConfig(p, "network")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nestedValue(next, "prefixes", "v6"); got != "fd7a:115c:a1e0::/48" {
+		t.Fatalf("打开开关后 prefixes.v6 = %q，期望写入新网段:\n%s", got, next)
+	}
+
+	// 关掉开关：配置里的 prefixes.v6 必须被删掉，而不是留着旧值。
+	p.PrefixV6 = ""
+	next, err = c.buildConfig(p, "network")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nestedValue(next, "prefixes", "v6"); got != "" {
+		t.Fatalf("关掉开关后 prefixes.v6 仍是 %q，应该从配置里删掉:\n%s", got, next)
+	}
+	if got := nestedValue(next, "prefixes", "v4"); got != "100.64.0.0/10" {
+		t.Fatalf("关掉 IPv6 时把 IPv4 网段也弄坏了: %q\n%s", got, next)
+	}
+	if strings.Contains(next, "v6:") {
+		t.Fatalf("配置里还残留 v6 键:\n%s", next)
+	}
+}
+
+// TestDeleteNestedKey 验证删键只动目标键，不伤到块里的其它内容。
+func TestDeleteNestedKey(t *testing.T) {
+	base := "prefixes:\n  v4: 100.64.0.0/10\n  v6: fd7a:115c:a1e0::/48\ndns:\n  magic_dns: true\n"
+	got := deleteNestedKey(base, "prefixes", "v6")
+	if strings.Contains(got, "v6:") {
+		t.Fatalf("v6 键没有被删掉:\n%s", got)
+	}
+	if !strings.Contains(got, "v4: 100.64.0.0/10") || !strings.Contains(got, "magic_dns: true") {
+		t.Fatalf("删键时伤到了别的内容:\n%s", got)
+	}
+	// 块或键不存在时原样返回。
+	if got := deleteNestedKey(base, "nosuch", "v6"); got != base {
+		t.Fatalf("块不存在时应原样返回:\n%s", got)
+	}
+	if got := deleteNestedKey(base, "prefixes", "v9"); got != base {
+		t.Fatalf("键不存在时应原样返回:\n%s", got)
 	}
 }

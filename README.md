@@ -130,7 +130,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 同一表单内端口重复会被直接拦截。`server_url` 端口与监听端口不一致时给出警告，避免改端口时两边互相锁死。
 
-IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿用旧值）。网段只校验 CIDR 格式，合法性最终交给 `headscale configtest` 兜底，避免管理界面比 headscale 更严格而拒绝合法配置。部分云厂商（如阿里云 ECS）自身占用 100 段，与设备虚拟地址冲突，此时可改成任意合法网段（如 `10.99.0.0/24`）。注意修改网段只影响**之后新加入**的设备，存量节点 IP 不变。
+IPv6 默认关闭。开关未勾选时会把配置里已有的 `prefixes.v6` **整行删除**（而不是留着旧值让 headscale 继续按 IPv6 网段分配地址），勾选后写入指定网段。网段只校验 CIDR 格式，合法性最终交给 `headscale configtest` 兜底，避免管理界面比 headscale 更严格而拒绝合法配置。部分云厂商（如阿里云 ECS）自身占用 100 段，与设备虚拟地址冲突，此时可改成任意合法网段（如 `10.99.0.0/24`）。注意修改网段只影响**之后新加入**的设备，存量节点 IP 不变。
 
 **节点网速上报**
 
@@ -272,7 +272,7 @@ bash node-speed-agent.sh
 
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
-bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验、IPv6 开关、网络表单、CSRF、登录限速、只读账号与撤权生效（需 go/curl）
+bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验、IPv6 开关（含配置文件落盘校验）、网络表单、CSRF、登录限速、只读账号与撤权生效（需 go/curl）
 (cd headscale-admin && go test ./...)   # 配置解析、管理界面 HTTPS 证书、节点映射、双语展示、告警规则与账号权限单元测试
 ```
 
