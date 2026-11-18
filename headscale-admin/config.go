@@ -55,6 +55,12 @@ type ConfigPage struct {
 	AdminTLSCert   string // 当前证书描述（CN + 到期时间）
 	AdminHTTPSLive bool   // 当前进程是否正以 HTTPS 运行
 
+	// 节点网速上报通道（POST /api/speed）：地址、令牌与启用状态
+	SpeedEndpoint string
+	SpeedToken    string // 只对 admin 角色下发（readonly 看不到）
+	SpeedEnabled  bool
+	SpeedChannel  string // 当前生效的数据来源：api（节点上报）或 file（计数器文件）
+
 	Service    string
 	ConfigPath string
 	Warnings   []string

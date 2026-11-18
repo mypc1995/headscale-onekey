@@ -8,7 +8,7 @@
 #
 # 用法：
 #   HSA_URL=http://<服务器tailnet地址>:3001/api/speed \
-#   HSA_TOKEN=<运维页显示的上报令牌> \
+#   HSA_TOKEN=<配置项页显示的上报令牌> \
 #   bash node-speed-agent.sh
 #
 # 可选环境变量：
@@ -43,7 +43,7 @@ ONCE="${HSA_ONCE:-0}"
 die() { echo "$*" >&2; exit 1; }
 
 [[ -n "$URL" ]] || die "需要设置 HSA_URL（上报地址，如 http://100.64.0.1:3001/api/speed）"
-[[ -n "$TOKEN" ]] || die "需要设置 HSA_TOKEN（上报令牌，在管理界面运维页可见）"
+[[ -n "$TOKEN" ]] || die "需要设置 HSA_TOKEN（上报令牌，在管理界面配置项页可见）"
 command -v curl >/dev/null 2>&1 || die "需要 curl"
 
 if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]] || [[ "$INTERVAL" -lt 1 ]]; then

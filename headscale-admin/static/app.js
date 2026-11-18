@@ -599,13 +599,9 @@
   });
 })();
 
-// 运维页：复制节点网速上报令牌。
+// 通用复制按钮：data-copy-target 指向要复制内容的元素 id，
+// 复制成功后按钮文案短暂变成「已复制」，再恢复原文。
 (function () {
-  var btn = document.getElementById('speed-token-copy');
-  var tokenEl = document.getElementById('speed-token');
-  var labelEl = document.getElementById('speed-token-copy-label');
-  if (!btn || !tokenEl) return;
-
   function copyText(text, done) {
     function fallback() {
       var ta = document.createElement('textarea');
@@ -625,18 +621,26 @@
     }
   }
 
-  btn.addEventListener('click', function () {
-    var text = (tokenEl.textContent || '').trim();
-    if (!text) return;
-    copyText(text, function () {
-      if (!labelEl) return;
-      var original = labelEl.textContent;
-      labelEl.textContent = '✓';
-      btn.classList.add('copied');
-      setTimeout(function () {
-        labelEl.textContent = original;
-        btn.classList.remove('copied');
-      }, 1600);
+  var buttons = document.querySelectorAll('[data-copy-target]');
+  Array.prototype.forEach.call(buttons, function (btn) {
+    var target = document.getElementById(btn.getAttribute('data-copy-target'));
+    if (!target) return;
+    var labelEl = btn.querySelector('.copy-label');
+    var original = labelEl ? labelEl.textContent : '';
+    var copied = btn.getAttribute('data-copied') || '✓';
+
+    btn.addEventListener('click', function () {
+      var text = (target.textContent || '').trim();
+      if (!text) return;
+      copyText(text, function () {
+        if (!labelEl) return;
+        labelEl.textContent = copied;
+        btn.classList.add('copied');
+        setTimeout(function () {
+          labelEl.textContent = original;
+          btn.classList.remove('copied');
+        }, 1600);
+      });
     });
   });
 })();

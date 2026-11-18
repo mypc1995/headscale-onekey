@@ -7,7 +7,7 @@
   </div>
   <div class="stat-card">
     <div class="stat-top">{{icon "globe" 17}} {{t .Lang "cfg.label.currentURL"}}</div>
-    <div class="cfg-value">{{if .Data.ServerURL}}{{.Data.ServerURL}}{{else}}—{{end}}</div>
+    <div class="cfg-value url">{{if .Data.ServerURL}}{{.Data.ServerURL}}{{else}}—{{end}}</div>
     <span class="badge muted">{{.Data.ListenAddr}}</span>
   </div>
   <div class="stat-card">
@@ -34,7 +34,7 @@
 <section class="card">
   <div class="card-head"><h2 class="card-title">{{icon "file" 18}} {{t .Lang "cfg.section.overview"}}</h2><span class="badge muted small">{{.Data.ConfigPath}}</span></div>
   <div class="kv">
-    <div class="kv-row"><span>{{t .Lang "cfg.label.currentURL"}}</span><b>{{if .Data.ServerURL}}{{.Data.ServerURL}}{{else}}—{{end}}</b></div>
+    <div class="kv-row"><span>{{t .Lang "cfg.label.currentURL"}}</span><b class="url">{{if .Data.ServerURL}}{{.Data.ServerURL}}{{else}}—{{end}}</b></div>
     <div class="kv-row"><span>{{t .Lang "cfg.label.currentListen"}}</span><b>{{if .Data.ListenAddr}}{{.Data.ListenAddr}}{{else}}—{{end}}</b></div>
     <div class="kv-row"><span>{{t .Lang "cfg.label.certMode"}}</span><b>{{if eq .Data.TLSMode "letsencrypt"}}{{t .Lang "cfg.mode.le"}}{{else if eq .Data.TLSMode "manual"}}{{t .Lang "cfg.mode.manual"}}{{else}}{{t .Lang "cfg.mode.http"}}{{end}}</b></div>
     <div class="kv-row"><span>{{t .Lang "cfg.cert.notAfter"}}</span><b>{{if .Data.Cert.Valid}}{{.Data.Cert.NotAfter}}{{else}}—{{end}}</b></div>
@@ -258,6 +258,38 @@
     <div class="notice warn">{{icon "x" 17}}<span>{{t .Lang "cfg.renew.noCertbot"}}</span></div>
     {{if eq .Data.Renew.Mode "acme"}}<div class="notice">{{icon "check" 17}}<span>{{t .Lang "cfg.renew.autoNote"}}</span></div>{{end}}
   {{end}}
+</section>
+
+<section class="card" id="speed">
+  <div class="card-head">
+    <h2 class="card-title">{{icon "activity" 18}} {{t .Lang "cfg.section.speed"}}</h2>
+    <span class="badge {{if .Data.SpeedEnabled}}success{{else}}muted{{end}}" id="speed-channel-state">{{if .Data.SpeedEnabled}}{{t .Lang "nodeMon.speedEnabled"}}{{else}}{{t .Lang "nodeMon.speedDisabled"}}{{end}}</span>
+  </div>
+  <p class="hint">{{t .Lang "cfg.speed.intro"}}</p>
+  <div class="cfg-kv">
+    <div class="cfg-kv-row">
+      <span class="cfg-kv-label">{{t .Lang "nodeMon.speedEndpoint"}}</span>
+      <code class="mono cfg-kv-value" id="speed-endpoint">{{.Data.SpeedEndpoint}}</code>
+      <button type="button" class="btn btn-sm" data-copy-target="speed-endpoint" data-copied="{{t .Lang "cfg.action.copied"}}">{{icon "copy" 14}} <span class="copy-label">{{t .Lang "cfg.action.copyEndpoint"}}</span></button>
+    </div>
+    {{if .Data.SpeedToken}}
+    <div class="cfg-kv-row">
+      <span class="cfg-kv-label">{{t .Lang "nodeMon.speedToken"}}</span>
+      <code class="mono cfg-kv-value" id="speed-token">{{.Data.SpeedToken}}</code>
+      <button type="button" class="btn btn-sm" data-copy-target="speed-token" data-copied="{{t .Lang "cfg.action.copied"}}">{{icon "copy" 14}} <span class="copy-label">{{t .Lang "cfg.action.copyToken"}}</span></button>
+    </div>
+    {{else}}
+    <div class="cfg-kv-row">
+      <span class="cfg-kv-label">{{t .Lang "nodeMon.speedToken"}}</span>
+      <span class="cfg-kv-value muted">{{t .Lang "cfg.speed.tokenHidden"}}</span>
+    </div>
+    {{end}}
+    <div class="cfg-kv-row">
+      <span class="cfg-kv-label">{{t .Lang "cfg.speed.sourceLabel"}}</span>
+      <span class="cfg-kv-value">{{if .Data.SpeedEnabled}}{{t .Lang "nodeMon.speedChannelApi"}}{{else}}{{t .Lang "cfg.speed.channelOff"}}{{end}}</span>
+    </div>
+  </div>
+  <div class="notice">{{icon "info" 17}}<span>{{t .Lang "cfg.speed.agentHint"}}</span></div>
 </section>
 
 <section class="card">

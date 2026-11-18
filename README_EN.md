@@ -203,7 +203,7 @@ The source lives in `headscale-admin/` and depends on no third-party project wit
 | HTTP reporting (recommended) | The collector runs on the node | Configure a report token to enable `POST /api/speed` |
 | Counter file | The collector runs next to the admin UI | Environment variable `HSA_NODE_SPEED_FILE` pointing at a JSON file |
 
-**HTTP reporting channel**: `deploy-headscale-admin.sh` generates a report token on deployment and stores it in `/var/lib/headscale-admin/node-speed-token` (mode 0600, reused on upgrade). The token can also be supplied directly through `HSA_NODE_SPEED_TOKEN`. **Without a token the whole endpoint is disabled and returns 404**, so it never becomes an anonymous write endpoint. The operations page shows the endpoint, the token, and the channel state, so an administrator can copy the token and hand it out.
+**HTTP reporting channel**: `deploy-headscale-admin.sh` generates a report token on deployment and stores it in `/var/lib/headscale-admin/node-speed-token` (mode 0600, reused on upgrade). The token can also be supplied directly through `HSA_NODE_SPEED_TOKEN`. **Without a token the whole endpoint is disabled and returns 404**, so it never becomes an anonymous write endpoint. The Settings page has a "Node speed reporting" card showing the endpoint, the token, and the channel state, so an administrator can copy the token and hand it out; the operations page keeps only a channel-state badge and a link to Settings.
 
 ```bash
 # Single report: node may be the node ID, the node name, or a tailnet IP — all three match

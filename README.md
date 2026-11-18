@@ -203,7 +203,7 @@ IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿�
 | HTTP 上报（推荐） | 采集 agent 跑在节点上 | 配置上报令牌后开放 `POST /api/speed` |
 | 计数器文件 | 采集 agent 与管理界面同机 | 环境变量 `HSA_NODE_SPEED_FILE` 指向 JSON 文件 |
 
-**HTTP 上报通道**：部署脚本 `deploy-headscale-admin.sh` 会自动生成上报令牌并写入 `/var/lib/headscale-admin/node-speed-token`（权限 0600，升级部署沿用），令牌也可通过 `HSA_NODE_SPEED_TOKEN` 直接给出。**没有配置令牌时整个接口关闭并返回 404**，不会变成任何人都能写的匿名入口。运维页会显示上报地址、令牌与通道状态，管理员登录后可直接复制令牌分发。
+**HTTP 上报通道**：部署脚本 `deploy-headscale-admin.sh` 会自动生成上报令牌并写入 `/var/lib/headscale-admin/node-speed-token`（权限 0600，升级部署沿用），令牌也可通过 `HSA_NODE_SPEED_TOKEN` 直接给出。**没有配置令牌时整个接口关闭并返回 404**，不会变成任何人都能写的匿名入口。管理界面的「配置项」页面里有「节点网速上报」卡片，显示上报地址、令牌与通道状态，管理员登录后可直接复制分发；运维页只保留一个通道状态徽标和指向配置项的链接。
 
 ```bash
 # 单条上报：node 可以是节点 ID、节点名或 tailnet IP，三种都能匹配到节点

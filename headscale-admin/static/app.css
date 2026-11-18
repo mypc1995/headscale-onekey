@@ -334,6 +334,7 @@ svg { flex: none; }
 .kv-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 2px dashed var(--border); }
 .kv-row span { color: var(--text-tertiary); font-size: .9rem; font-weight: 600; }
 .kv-row b { font-size: .94rem; font-weight: 800; word-break: break-all; }
+.kv-row b.url { word-break: normal; overflow-wrap: break-word; }
 .badge {
   display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: var(--border-width) solid var(--border);
   border-radius: var(--radius-full); background: var(--accent-bg); color: var(--accent); font-size: .94rem; font-weight: 800;
@@ -485,6 +486,9 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 
 /* 配置管理页 */
 .cfg-value { font-size: 1.02rem; font-weight: 800; line-height: 1.35; letter-spacing: -.01em; word-break: break-all; }
+/* 摘要卡片里的地址：只在真的放不下时才折行，且优先断在 URL 的自然边界
+   （:// 与 / 之后），不要把端口号拆到下一行。 */
+.cfg-value.url { font-size: .86rem; font-weight: 700; line-height: 1.45; word-break: normal; overflow-wrap: break-word; }
 .span-2 { grid-column: span 2; }
 .field-error { display: block; color: var(--danger); font-size: .86rem; font-weight: 700; line-height: 1.35; }
 .form-input.invalid { border-color: var(--danger); box-shadow: 0 0 0 2px var(--danger-bg); }
@@ -500,6 +504,26 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .tls-block { padding: 12px 14px; border: 2px dashed var(--border); border-radius: var(--radius-md); background: var(--bg-primary); }
 .tls-block[hidden] { display: none; }
 .tls-block .hint { margin-top: 10px; }
+
+/* 配置项里的「只读键值 + 复制按钮」行 */
+.cfg-kv { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 4px; }
+.cfg-kv-row { display: flex; align-items: center; gap: 12px; padding: 10px 13px; background: var(--bg-primary); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); }
+.cfg-kv-label { flex: none; min-width: 84px; font-size: .82rem; font-weight: 800; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .04em; }
+.cfg-kv-value { flex: 1; min-width: 0; font-size: .9rem; font-weight: 600; line-height: 1.5; word-break: normal; overflow-wrap: break-word; }
+/* 行本身已经是带边框的容器，值不要再套一层 code 边框 */
+.cfg-kv-row code { background: none; border: none; padding: 0; border-radius: 0; }
+.cfg-kv-row .btn { flex: none; white-space: nowrap; }
+.cfg-kv-row .btn.copied { color: var(--success); }
+@media (max-width: 780px) {
+  .cfg-kv-row { flex-wrap: wrap; }
+  .cfg-kv-label { min-width: 0; }
+  .cfg-kv-value { flex-basis: 100%; order: 3; }
+}
+
+/* 运维页节点监控里的上报通道状态 */
+.speed-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 14px; }
+.speed-status-link { font-size: .86rem; font-weight: 700; color: var(--accent); text-decoration: none; }
+.speed-status-link:hover { text-decoration: underline; }
 
 /* 本机资源与节点监控 */
 .host-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }

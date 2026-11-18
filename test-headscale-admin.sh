@@ -363,10 +363,15 @@ sp_code() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/speed" -H 
 curl -s -b "$JAR" "$BASE/api/monitor" -o "$TMPDIR/monitor-ch.json"
 grep -q '"speed_enabled":true' "$TMPDIR/monitor-ch.json" && ok "上报通道状态已下发" || fail "上报通道状态缺失"
 
+curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings-speed.html"
+grep -q 'id="speed-endpoint"' "$TMPDIR/settings-speed.html" && ok "配置页展示上报接口地址" || fail "配置页缺少上报接口地址"
+grep -q 'id="speed-token"' "$TMPDIR/settings-speed.html" && ok "配置页展示上报令牌" || fail "配置页缺少上报令牌"
+grep -q 'id="speed-channel-state"' "$TMPDIR/settings-speed.html" && ok "配置页展示上报通道状态" || fail "配置页缺少上报通道状态"
+# 运维页只保留紧凑的通道状态，上报地址与令牌已经挪到配置页。
 curl -s -b "$JAR" "$BASE/ops" -o "$TMPDIR/ops-speed.html"
-grep -q 'id="speed-endpoint"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报接口地址" || fail "缺少上报接口地址"
-grep -q 'id="speed-token"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报令牌" || fail "缺少上报令牌"
-grep -q 'id="speed-channel-state"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报通道状态" || fail "缺少上报通道状态"
+grep -q 'id="speed-channel-state"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报通道状态" || fail "运维页缺少上报通道状态"
+grep -q 'id="speed-token"' "$TMPDIR/ops-speed.html" && fail "运维页仍在展示上报令牌" || ok "运维页不再展示上报令牌"
+grep -q 'id="speed-endpoint"' "$TMPDIR/ops-speed.html" && fail "运维页仍在展示上报接口" || ok "运维页不再展示上报接口"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   info "验证上报后节点速度真正显示出来"

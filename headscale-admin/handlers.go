@@ -62,10 +62,6 @@ type opsData struct {
 	Logs       string
 	ConfigPath string
 	PolicyPath string
-	// SpeedEndpoint 是节点侧上报接口的完整地址。
-	SpeedEndpoint string
-	// SpeedToken 是上报令牌，只对 admin 角色下发（readonly 看不到）。
-	SpeedToken string
 }
 
 // monitorResponse 是 /api/monitor 的返回结构：一次请求带回本机资源、
@@ -181,11 +177,6 @@ func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
 	d.Alerts = evaluateAlerts(alertInput{Host: hostSnap, Nodes: nodeSnap, Lang: lang}, a.thresholds)
 	if d.Service == "" {
 		d.Service = tr(lang, "state.unknown")
-	}
-	d.SpeedEndpoint = a.speedEndpoint(r)
-	// 上报令牌只下发给 admin 角色，readonly 账号看不到。
-	if s := sessionFrom(r); s != nil && s.Role == "admin" && a.speed != nil {
-		d.SpeedToken = a.speed.tokenValue()
 	}
 	a.render(w, r, "ops", d)
 }
@@ -800,7 +791,31 @@ func (a *App) monitorAPI(w http.ResponseWriter, r *http.Request) {
 // ---------- Headscale 配置管理 ----------
 
 func (a *App) settingsPage(w http.ResponseWriter, r *http.Request) {
-	a.render(w, r, "settings", a.loadSettingsPage(langFrom(r), r.TLS != nil))
+	a.renderSettings(w, r, a.loadSettingsPage(langFrom(r), r.TLS != nil))
+}
+
+// renderSettings 渲染配置页。节点网速上报通道的地址依赖请求的 Host、
+// 令牌依赖会话角色，所以所有配置页的渲染都统一走这里，保证每次都带上
+// 最新的通道状态——表单校验失败重新渲染时也不会漏掉这一段。
+func (a *App) renderSettings(w http.ResponseWriter, r *http.Request, p *ConfigPage) {
+	a.applySpeedSettings(r, p)
+	a.render(w, r, "settings", p)
+}
+
+// applySpeedSettings 把节点网速上报通道的状态填进配置页模型。
+// 上报令牌只下发给 admin 角色，readonly 账号看不到。
+func (a *App) applySpeedSettings(r *http.Request, p *ConfigPage) {
+	if p == nil {
+		return
+	}
+	p.SpeedEndpoint = a.speedEndpoint(r)
+	p.SpeedEnabled = a.speed != nil && a.speed.enabled()
+	if a.nodes != nil {
+		p.SpeedChannel = a.nodes.Snapshot().SpeedChannel
+	}
+	if s := sessionFrom(r); s != nil && s.Role == "admin" && a.speed != nil {
+		p.SpeedToken = a.speed.tokenValue()
+	}
 }
 
 // loadSettingsPage 在 headscale 配置之外补充管理界面自身的 HTTPS 状态。
@@ -845,13 +860,13 @@ func (a *App) settingsDomain(w http.ResponseWriter, r *http.Request) {
 	if errs := validateDomain(p, lang); len(errs) > 0 {
 		p.Errors = errs
 		p.Warnings = configWarnings(p, lang)
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 		return
 	}
 	next, err := a.hs.buildConfig(p, "domain")
 	if err != nil {
 		p.Errors = map[string]string{"server_url": err.Error()}
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 		return
 	}
 	a.applySettings(w, r, p, next, "cfg.msg.domainSaved", nil)
@@ -888,13 +903,13 @@ func (a *App) settingsNetwork(w http.ResponseWriter, r *http.Request) {
 	if len(errs) > 0 {
 		p.Errors = errs
 		p.Warnings = configWarnings(p, lang)
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 		return
 	}
 	next, err := a.hs.buildConfig(p, "network")
 	if err != nil {
 		p.Errors = map[string]string{"listen_addr": err.Error()}
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 		return
 	}
 	a.applySettings(w, r, p, next, "cfg.msg.networkSaved", nil)
@@ -955,7 +970,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	if errs := validateTLS(p, lang); len(errs) > 0 {
 		p.Errors = errs
 		p.Warnings = configWarnings(p, lang)
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 		return
 	}
 
@@ -966,7 +981,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			p.Errors = map[string]string{"cert_pem": tr(lang, "cfg.err.certSave", err.Error())}
 			p.Warnings = configWarnings(p, lang)
-			a.render(w, r, "settings", p)
+			a.renderSettings(w, r, p)
 			return
 		}
 		p.CertPath, p.KeyPath, rollback = certPath, keyPath, undo
@@ -977,7 +992,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		rollback()
 		p.Errors = map[string]string{"tls_mode": err.Error()}
 		p.Warnings = configWarnings(p, lang)
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 		return
 	}
 	a.applySettings(w, r, p, next, "cfg.msg.tlsSaved", rollback)
@@ -996,7 +1011,7 @@ func (a *App) applySettings(w http.ResponseWriter, r *http.Request, p *ConfigPag
 		p.Warnings = configWarnings(p, lang)
 		fresh := a.hs.loadConfigPage(lang)
 		fresh.Errors = p.Errors
-		a.render(w, r, "settings", fresh)
+		a.renderSettings(w, r, fresh)
 		return
 	}
 	msg := tr(lang, successKey)
@@ -1022,7 +1037,7 @@ func (a *App) settingsAdminTLS(w http.ResponseWriter, r *http.Request) {
 	fail := func(key string, args ...any) {
 		p := a.loadSettingsPage(lang, r.TLS != nil)
 		p.Errors = map[string]string{"admin_tls": tr(lang, key, args...)}
-		a.render(w, r, "settings", p)
+		a.renderSettings(w, r, p)
 	}
 
 	cfg := loadAdminTLS(a.dataFile)
