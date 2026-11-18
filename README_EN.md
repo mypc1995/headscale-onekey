@@ -132,6 +132,12 @@ Duplicate ports within the same form are rejected outright. A warning appears wh
 
 IPv6 is disabled by default; when the toggle is off, `prefixes.v6` is not written (rather than keeping the previous value). Prefixes are only validated as CIDR — final legality is delegated to `headscale configtest`, so the admin UI never rejects a valid config by being stricter than headscale. Some cloud providers (e.g. Alibaba Cloud ECS) occupy the 100.x range themselves, which conflicts with device virtual addresses; pick any valid range in that case (e.g. `10.99.0.0/24`). Note that changing prefixes only affects devices that join **afterwards** — existing node IPs stay the same.
 
+**Node speed reporting**
+
+This block is read-only display and distribution: it shows the report endpoint, the report token and the channel state, each with a copy button. The token is only handed to the admin role; readonly accounts see "Administrators only". The operations page keeps just a channel-state badge and a link to this block.
+
+The hostname in the endpoint comes from the Host header you used to reach the admin UI: an address-based Host is used as-is, and a hostname is only accepted when it appears in the headscale config as `server_url` or `dns.base_domain` — otherwise it falls back to `127.0.0.1:<port>`. That prevents a forged Host header from making an administrator copy an address pointing somewhere else. When nodes reach the server from inside the tailnet, replace the hostname with the server's tailnet IP.
+
 #### Network & policy page (`/network`)
 
 Network settings can also be maintained as graphical forms on `/network`, each block saved independently:
@@ -184,7 +190,7 @@ Changing the listen port or `server_url` briefly interrupts client connections; 
 
 The UI supports Chinese/English switching: the globe icon in the header toggles the language, the choice is stored in a cookie, and the login page can be switched too. The theme dropdown offers 14 palettes (light, dark, cyberpunk, ocean, sunset, forest, midnight, dracula, nord, rose, coffee, terminal, soft, synthwave), persisted in the browser. The design uses a neo-brutalist style with warm backgrounds, thick borders, and hard shadows; all icons are inline with no external CDN dependencies.
 
-Authentication uses an independent account system: passwords are stored with salted PBKDF2-HMAC-SHA256 (120,000 iterations), sessions use HttpOnly cookies, every form carries a CSRF token, and the readonly role cannot submit changes.
+Authentication uses an independent account system: passwords are stored with salted PBKDF2-HMAC-SHA256 (120,000 iterations), sessions use HttpOnly cookies, every form carries a CSRF token, and the readonly role cannot submit changes. Failed logins are counted per account and per source IP: repeated failures make that account's logins progressively slower, and too many failures from one IP lock it out temporarily. Usernames that do not exist still pay the full key-derivation cost, so they cannot be enumerated by timing. When an administrator demotes, disables, deletes an account or changes its password, that account's live sessions are revoked immediately — revocation takes effect at once.
 
 Admin accounts and sessions live in SQLite (`/var/lib/headscale-admin/headscale-admin.db`, mode 0600), so logins survive service restarts. On first startup, a legacy `admins.json` is migrated automatically and renamed to `admins.json.migrated`; existing passwords keep working. The SQLite driver is pure Go (`modernc.org/sqlite`), so no gcc or CGO is needed to build.
 
@@ -273,6 +279,8 @@ bash test-headscale-admin.sh      # Admin UI build, login, i18n, themes, bandwid
 ## Security notes
 
 - The admin UI uses an independent account system: passwords are stored as salted PBKDF2 digests and sessions use HttpOnly cookies; over HTTP the traffic is still plaintext, so on public networks use HTTPS or restrict sources with `--allow-cidr`.
+- Initial and reset admin credentials can also be passed through environment variables (`HSA_INIT_ADMIN`, `HSA_RESET_ADMIN`, format `username:password`). Command-line arguments show up in `/proc/<pid>/cmdline` and are readable by any local user; the deploy script uses environment variables by default so the password never lands in the process arguments.
+- The deploy script opens TCP/3001 to every source in the firewall. On an internal network add `--allow-cidr` to restrict it; anything exposed publicly must have admin UI HTTPS enabled first.
 - Admin UI HTTPS and headscale service HTTPS are two independent configurations and can be enabled separately. Once admin UI HTTPS is on, that port only accepts HTTPS and `http://` requests are not redirected; if a bad certificate makes the page unreachable, delete `admin-tls.json` from the data directory and restart the service to return to HTTP.
 - HTTP mode is plaintext; newer Tailscale clients may require `TS_ALLOW_HTTP_CONTROL_SERVER=1`.
 - HTTPS mode requires the domain to resolve to this host, with ports 80 (certificate validation) and 443 (service) reachable.

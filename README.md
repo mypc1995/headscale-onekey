@@ -108,7 +108,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 #### 配置管理页（`/settings`）
 
-把 Headscale 常用配置集中到网页端，避免手改 YAML。页面分四块，每块独立保存、互不影响。表单上用通俗名称描述用途，名称旁边的小标签是原始配置键，方便对照 YAML 和官方文档；键名本身不做任何改动。
+把 Headscale 常用配置集中到网页端，避免手改 YAML。页面各块独立保存、互不影响。表单上用通俗名称描述用途，名称旁边的小标签是原始配置键，方便对照 YAML 和官方文档；键名本身不做任何改动。
 
 **域名与访问地址**
 
@@ -131,6 +131,12 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 同一表单内端口重复会被直接拦截。`server_url` 端口与监听端口不一致时给出警告，避免改端口时两边互相锁死。
 
 IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿用旧值）。网段只校验 CIDR 格式，合法性最终交给 `headscale configtest` 兜底，避免管理界面比 headscale 更严格而拒绝合法配置。部分云厂商（如阿里云 ECS）自身占用 100 段，与设备虚拟地址冲突，此时可改成任意合法网段（如 `10.99.0.0/24`）。注意修改网段只影响**之后新加入**的设备，存量节点 IP 不变。
+
+**节点网速上报**
+
+这一块是只读的展示与分发区：显示上报接口地址、上报令牌与通道状态，地址和令牌各带一个复制按钮。令牌只对 admin 角色下发，只读账号看到的是「仅管理员可见」。运维页只保留一个通道状态徽标和指向本块的链接。
+
+上报地址里的主机名取自你访问管理界面时用的 Host：按 IP 直连时原样使用，用域名访问时只有该域名出现在 headscale 配置的 `server_url` 或 `dns.base_domain` 里才会被采用，否则退回 `127.0.0.1:<端口>`。这是为了防止伪造 Host 头把管理员骗去复制一个指向别处的地址。节点在 tailnet 内访问时，请把地址里的主机名换成服务器的 tailnet IP。
 
 #### 网络与策略页（`/network`）
 
@@ -184,7 +190,7 @@ IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿�
 
 界面支持中英文切换：顶部地球图标可切换语言，选择保存在 Cookie 中，登录页也能切换。主题下拉提供 14 套配色（浅色、深色、赛博朋克、海洋、日落、森林、午夜、德古拉、北欧、玫瑰、咖啡、终端、柔和、合成波），选择保存在浏览器本地，界面采用暖色底、粗边框、硬阴影的新粗野主义风格，图标全部内联，不依赖外部 CDN。
 
-认证采用独立账号体系：密码用 PBKDF2-HMAC-SHA256（12 万次迭代）加盐保存，会话使用 HttpOnly Cookie，所有表单带 CSRF token，只读角色无法提交修改。
+认证采用独立账号体系：密码用 PBKDF2-HMAC-SHA256（12 万次迭代）加盐保存，会话使用 HttpOnly Cookie，所有表单带 CSRF token，只读角色无法提交修改。登录失败会按账号与来源 IP 两个维度计数：猜错多次后同一账号的登录会逐渐变慢，同一 IP 失败过多会被临时锁定；不存在的用户名同样要付出完整的密钥派生代价，避免被用来枚举账号。管理员把账号降为只读、停用、删除或改密后，该账号已登录的会话会立即失效，撤权当场生效。
 
 管理员账号与会话都存放在 SQLite（`/var/lib/headscale-admin/headscale-admin.db`，权限 0600），服务重启后登录状态仍然保留。首次启动时如果检测到旧版 `admins.json`，会自动迁移并把原文件改名为 `admins.json.migrated`，原密码继续可用。SQLite 驱动为纯 Go 实现（`modernc.org/sqlite`），编译不需要 gcc 或 CGO。
 
@@ -266,13 +272,15 @@ bash node-speed-agent.sh
 
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
-bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验、IPv6 开关、网络表单与 CSRF（需 go/curl）
-(cd headscale-admin && go test ./...)   # 配置解析、管理界面 HTTPS 证书、节点映射、双语展示与告警规则单元测试
+bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验、IPv6 开关、网络表单、CSRF、登录限速、只读账号与撤权生效（需 go/curl）
+(cd headscale-admin && go test ./...)   # 配置解析、管理界面 HTTPS 证书、节点映射、双语展示、告警规则与账号权限单元测试
 ```
 
 ## 安全提示
 
 - 管理界面走独立账号体系，密码经 PBKDF2 加盐摘要保存，登录态为 HttpOnly Cookie；HTTP 模式下传输仍是明文，公网使用请配合 HTTPS 或 `--allow-cidr` 限制来源。
+- 初始与重置管理员的口令也可以用环境变量传入（`HSA_INIT_ADMIN`、`HSA_RESET_ADMIN`，格式 `用户名:密码`）。命令行参数会出现在 `/proc/<pid>/cmdline` 里，同机任何用户都读得到；部署脚本默认走环境变量，避免口令留在进程参数中。
+- 部署脚本会在防火墙放行 TCP/3001 给所有来源。内网自用建议加 `--allow-cidr` 限制网段；公网暴露务必先启用管理界面 HTTPS。
 - 管理界面 HTTPS 与 headscale 服务的 HTTPS 是两套独立配置，可分别启用。启用管理界面 HTTPS 后该端口只接受 HTTPS，请求 `http://` 不会跳转；证书异常导致无法访问时，删除数据目录的 `admin-tls.json` 并重启服务即可恢复 HTTP。
 - HTTP 模式为明文，较新的 Tailscale 客户端可能需要设置 `TS_ALLOW_HTTP_CONTROL_SERVER=1`。
 - HTTPS 模式需要域名正确解析到本机，并确保 80（证书验证）和 443（服务）端口可达。
