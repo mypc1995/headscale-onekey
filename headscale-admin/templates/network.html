@@ -1,36 +1,89 @@
 {{define "network"}}{{template "head" .}}
 <section class="card">
-  <div class="card-head"><h2 class="card-title">{{icon "file" 18}} {{t .Lang "section.acl"}}</h2><span class="badge muted small">{{.Data.PolicyPath}}</span></div>
-  <form method="post" action="/network/acl" onsubmit="return confirm('{{t .Lang "confirm.saveACL"}}')">
+  <div class="card-head"><h2 class="card-title">{{icon "network" 18}} {{t .Lang "section.dns"}}</h2></div>
+  <form method="post" action="/network/dns" class="form-stack">
     {{template "csrf" .}}
-    <textarea class="form-input" name="acl" rows="18" spellcheck="false">{{.Data.ACL}}</textarea>
-    <div class="form-actions"><button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "action.saveValidate"}}</button></div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">{{t .Lang "label.baseDomain"}}<span class="key">dns.base_domain</span></label>
+        <input class="form-input" name="base_domain" value="{{.Data.BaseDomain}}" required>
+      </div>
+      <div class="form-group check-stack">
+        <label class="check-label"><input class="form-checkbox" type="checkbox" name="magic_dns" {{if eq .Data.MagicDNS "true"}}checked{{end}}> {{t .Lang "label.magicDNS"}}<span class="key">dns.magic_dns</span></label>
+        <label class="check-label"><input class="form-checkbox" type="checkbox" name="override_local_dns" {{if eq .Data.OverrideLocal "true"}}checked{{end}}> {{t .Lang "label.overrideLocal"}}<span class="key">dns.override_local_dns</span></label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">{{t .Lang "label.nameservers"}}<span class="key">dns.nameservers.global</span></label>
+      <div class="dyn-rows" id="ns-rows">
+        {{range .Data.Nameservers}}<div class="dyn-row"><input class="form-input" name="ns" value="{{.}}" placeholder="223.5.5.5"><button type="button" class="btn btn-sm btn-ghost row-del" title="{{t $.Lang "action.delRow"}}">{{icon "x" 13}}</button></div>{{end}}
+        <div class="dyn-row"><input class="form-input" name="ns" value="" placeholder="223.5.5.5"><button type="button" class="btn btn-sm btn-ghost row-add" data-target="ns-rows" title="{{t $.Lang "action.addRow"}}">{{icon "plus" 13}}</button></div>
+      </div>
+      <span class="field-hint">{{t .Lang "hint.nameservers"}}</span>
+    </div>
+    <div class="form-group">
+      <label class="form-label">{{t .Lang "label.searchDomains"}}<span class="key">dns.search_domains</span></label>
+      <div class="dyn-rows" id="sd-rows">
+        {{range .Data.SearchDomains}}<div class="dyn-row"><input class="form-input" name="search" value="{{.}}" placeholder="internal.example.com"><button type="button" class="btn btn-sm btn-ghost row-del" title="{{t $.Lang "action.delRow"}}">{{icon "x" 13}}</button></div>{{end}}
+        <div class="dyn-row"><input class="form-input" name="search" value="" placeholder="internal.example.com"><button type="button" class="btn btn-sm btn-ghost row-add" data-target="sd-rows" title="{{t $.Lang "action.addRow"}}">{{icon "plus" 13}}</button></div>
+      </div>
+      <span class="field-hint">{{t .Lang "hint.searchDomains"}}</span>
+    </div>
+    <div class="form-actions">
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
+      <button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.saveDNS"}}</button>
+    </div>
   </form>
 </section>
 
 <section class="card">
-  <div class="card-head"><h2 class="card-title">{{icon "network" 18}} {{t .Lang "section.dnsDerp"}}</h2></div>
-  <div class="two-col">
-    <form method="post" action="/network/dns" class="form-stack">
-      {{template "csrf" .}}
-      <div class="form-group"><label class="form-label">{{t .Lang "label.baseDomain"}}<input class="form-input" name="base_domain" value="{{.Data.BaseDomain}}" required></label></div>
-      <label class="check-label"><input class="form-checkbox" type="checkbox" name="magic_dns" {{if eq .Data.MagicDNS "true"}}checked{{end}}> {{t .Lang "label.magicDNS"}}</label>
-      <div><button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.saveDNS"}}</button></div>
-    </form>
-    <form method="post" action="/network/derp" class="form-stack">
-      {{template "csrf" .}}
-      <label class="check-label"><input class="form-checkbox" type="checkbox" name="enabled" {{if eq .Data.DERPEnabled "true"}}checked{{end}}> {{t .Lang "label.derp"}}</label>
-      <div><button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.saveDERP"}}</button></div>
-    </form>
-  </div>
+  <div class="card-head"><h2 class="card-title">{{icon "network" 18}} {{t .Lang "section.derp"}}</h2></div>
+  <form method="post" action="/network/derp" class="form-stack">
+    {{template "csrf" .}}
+    <label class="check-label"><input class="form-checkbox" type="checkbox" name="enabled" {{if eq .Data.DERPEnabled "true"}}checked{{end}}> {{t .Lang "label.derp"}}<span class="key">derp.server.enabled</span></label>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">{{t .Lang "label.regionID"}}<span class="key">derp.server.region_id</span></label>
+        <input class="form-input" name="region_id" value="{{if .Data.DERPRegionID}}{{.Data.DERPRegionID}}{{else}}900{{end}}" placeholder="900">
+        <span class="field-hint">{{t .Lang "hint.regionID"}}</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{t .Lang "label.regionName"}}<span class="key">derp.server.region_name</span></label>
+        <input class="form-input" name="region_name" value="{{.Data.DERPRegionName}}" placeholder="Headscale Embedded DERP">
+      </div>
+    </div>
+    <div class="form-actions">
+      <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>
+      <button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "action.saveDERP"}}</button>
+    </div>
+  </form>
   <p class="hint">{{t .Lang "hint.serverURL" .Data.ServerURL .Data.ListenAddr}}</p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "file" 18}} {{t .Lang "section.acl"}}</h2><span class="badge muted small">{{.Data.PolicyPath}}</span></div>
+  <div class="acl-builder">
+    <div class="builder-title">{{t .Lang "acl.builder"}}</div>
+    <div class="builder-row">
+      <input class="form-input" id="acl-src" placeholder="{{t .Lang "acl.field.src"}}">
+      <input class="form-input" id="acl-dst" placeholder="{{t .Lang "acl.field.dst"}}">
+      <input class="form-input" id="acl-port" placeholder="{{t .Lang "acl.field.port"}}">
+      <button type="button" class="btn btn-sm" id="acl-add">{{icon "plus" 13}} {{t .Lang "acl.addRule"}}</button>
+    </div>
+    <p class="hint">{{t .Lang "acl.builderHint"}}</p>
+  </div>
+  <form method="post" action="/network/acl" onsubmit="return confirm('{{t .Lang "confirm.saveACL"}}')">
+    {{template "csrf" .}}
+    <textarea class="form-input mono" id="acl-editor" name="acl" rows="18" spellcheck="false">{{.Data.ACL}}</textarea>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "action.saveValidate"}}</button></div>
+  </form>
 </section>
 
 <section class="card">
   <div class="card-head"><h2 class="card-title">{{icon "server" 18}} {{t .Lang "section.fullConfig"}}</h2></div>
   <form method="post" action="/network/config" onsubmit="return confirm('{{t .Lang "confirm.saveConfig"}}')">
     {{template "csrf" .}}
-    <textarea class="form-input" name="config" rows="20" spellcheck="false">{{.Data.Config}}</textarea>
+    <textarea class="form-input mono" name="config" rows="20" spellcheck="false">{{.Data.Config}}</textarea>
     <div class="form-actions"><button class="btn btn-danger" type="submit">{{icon "save" 15}} {{t .Lang "action.overwrite"}}</button></div>
   </form>
 </section>

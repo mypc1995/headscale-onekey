@@ -169,8 +169,24 @@ curl -s -b "$JAR" -X POST "$BASE/settings/domain" \
 grep -q '只支持 http:// 或 https://' "$TMPDIR/e1.html" && ok "非法协议被拦截" || fail "非法协议未被拦截"
 
 curl -s -b "$JAR" -X POST "$BASE/settings/network" \
-  -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=10.0.0.0/8&prefix_v6=" -o "$TMPDIR/e2.html"
-grep -q '100.64.0.0/10' "$TMPDIR/e2.html" && ok "越界 IPv4 段被拦截" || fail "越界 IPv4 段未被拦截"
+  -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=999.0.0.0/8&prefix_v6=" -o "$TMPDIR/e2.html"
+grep -q 'IPv4 段格式错误' "$TMPDIR/e2.html" && ok "非法 IPv4 段被拦截" || fail "非法 IPv4 段未被拦截"
+
+info "验证网段不写死 100.64.0.0/10"
+# 100.64.0.0/10 不再是硬性约束：自定义网段（如云厂商占用的 10.99.0.0/24）应被接受，
+# 只校验 CIDR 格式，合法性交给 headscale configtest 兜底。
+curl -s -b "$JAR" -X POST "$BASE/settings/network" \
+  -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=10.99.0.0/24&prefix_v6=" -o "$TMPDIR/e2b.html"
+grep -q 'IPv4 段格式错误' "$TMPDIR/e2b.html" && fail "自定义 IPv4 段被误判为非法" || ok "自定义 IPv4 段不再被 100.64 范围限制"
+grep -q '必须位于' "$TMPDIR/e2b.html" && fail "仍提示必须位于 100.64.0.0/10 内" || ok "已移除必须位于 100.64.0.0/10 的限制"
+
+info "验证 IPv6 开关"
+grep -q 'name="ipv6_enabled"' "$TMPDIR/settings.html" && ok "配置页提供 IPv6 开关" || fail "缺少 IPv6 开关"
+grep -q 'id="prefix-v6-wrap"' "$TMPDIR/settings.html" && ok "IPv6 网段输入框可联动显隐" || fail "缺少 IPv6 网段联动容器"
+# 勾选 IPv6 但留空网段应被拦截。
+curl -s -b "$JAR" -X POST "$BASE/settings/network" \
+  -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&ipv6_enabled=on&prefix_v6=" -o "$TMPDIR/e2c.html"
+grep -q '已勾选启用 IPv6' "$TMPDIR/e2c.html" && ok "勾选 IPv6 却留空被拦截" || fail "勾选 IPv6 留空未被拦截"
 
 curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
   -d "csrf=${CSRF}&tls_mode=letsencrypt&tls_letsencrypt_hostname=&acme_email=bad&tls_letsencrypt_challenge_type=HTTP-01&tls_letsencrypt_listen=:http&tls_letsencrypt_cache_dir=/var/lib/headscale/cache" -o "$TMPDIR/e3.html"
@@ -199,6 +215,75 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 else
   info "非 Linux 环境无法执行 headscale configtest，跳过写入链路（由远程测试覆盖）"
 fi
+
+info "验证网络与策略页（图形化表单）"
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/network.html"
+for kw in 'DNS 设置' 'DERP 中继' 'ACL 策略' '规则向导' 'DNS 服务器' '搜索域' '中继区域编号'; do
+  grep -q "$kw" "$TMPDIR/network.html" && ok "网络页包含「$kw」" || fail "网络页缺少「$kw」"
+done
+# 动态行：DNS 服务器 / 搜索域各有一组可增删的行。
+grep -q 'id="ns-rows"' "$TMPDIR/network.html" && ok "DNS 服务器动态行容器存在" || fail "缺少 DNS 服务器动态行容器"
+grep -q 'id="sd-rows"' "$TMPDIR/network.html" && ok "搜索域动态行容器存在" || fail "缺少搜索域动态行容器"
+grep -q 'name="ns"' "$TMPDIR/network.html" && ok "DNS 服务器输入框存在" || fail "缺少 DNS 服务器输入框"
+grep -q 'name="search"' "$TMPDIR/network.html" && ok "搜索域输入框存在" || fail "缺少搜索域输入框"
+grep -q 'name="override_local_dns"' "$TMPDIR/network.html" && ok "覆盖本地 DNS 开关存在" || fail "缺少覆盖本地 DNS 开关"
+grep -q 'name="region_id"' "$TMPDIR/network.html" && ok "DERP 区域编号输入框存在" || fail "缺少 DERP 区域编号输入框"
+grep -q 'name="region_name"' "$TMPDIR/network.html" && ok "DERP 区域名称输入框存在" || fail "缺少 DERP 区域名称输入框"
+# ACL 规则向导：来源 / 目标 / 端口 + 生成按钮 + JSON 编辑框。
+for kw in 'id="acl-src"' 'id="acl-dst"' 'id="acl-port"' 'id="acl-add"' 'id="acl-editor"'; do
+  grep -q "$kw" "$TMPDIR/network.html" && ok "ACL 向导包含「$kw」" || fail "ACL 向导缺少「$kw」"
+done
+grep -q 'acl-add' "$SRC_ROOT/static/app.js" && ok "ACL 向导脚本就绪" || fail "缺少 ACL 向导脚本"
+
+info "验证网络表单校验与提示消息"
+NCSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/network.html" | head -1 | sed 's/.*value="//;s/"//')"
+[[ ${#NCSRF} -ge 32 ]] && ok "网络页 CSRF token 已下发" || fail "网络页未下发 CSRF token"
+# flash 提示必须真的显示出来（SQLite 的 UPDATE..RETURNING 语义曾导致提示恒为空）。
+curl -s -b "$JAR" -X POST "$BASE/network/dns" \
+  --data-urlencode "csrf=${NCSRF}" --data-urlencode "base_domain=hs.example.com" \
+  --data-urlencode "ns=not-an-ip" --data-urlencode "search=" \
+  -o /dev/null -w '%{http_code}' | grep -q '303' && ok "DNS 表单提交已重定向" || fail "DNS 表单提交未重定向"
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n1.html"
+grep -q 'DNS 服务器格式不正确' "$TMPDIR/n1.html" && ok "非法 DNS 服务器被拦截并提示" || fail "非法 DNS 服务器未提示"
+# 同一条提示只能显示一次，刷新后应消失。
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n2.html"
+grep -q 'DNS 服务器格式不正确' "$TMPDIR/n2.html" && fail "flash 提示重复显示" || ok "flash 提示只显示一次"
+
+curl -s -b "$JAR" -X POST "$BASE/network/dns" \
+  --data-urlencode "csrf=${NCSRF}" --data-urlencode "base_domain=hs.example.com" \
+  --data-urlencode "ns=223.5.5.5" --data-urlencode "search=bad domain!" \
+  -o /dev/null
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n3.html"
+grep -q '搜索域格式不正确' "$TMPDIR/n3.html" && ok "非法搜索域被拦截并提示" || fail "非法搜索域未提示"
+
+curl -s -b "$JAR" -X POST "$BASE/network/derp" \
+  --data-urlencode "csrf=${NCSRF}" --data-urlencode "enabled=on" \
+  --data-urlencode "region_id=99999" --data-urlencode "region_name=test" \
+  -o /dev/null
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n4.html"
+grep -q '中继区域编号应为 0-65535 的数字' "$TMPDIR/n4.html" && ok "非法 DERP 区域编号被拦截并提示" || fail "非法 DERP 区域编号未提示"
+
+curl -s -b "$JAR" -X POST "$BASE/network/acl" \
+  --data-urlencode "csrf=${NCSRF}" --data-urlencode "acl=" -o /dev/null
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n5.html"
+grep -q 'ACL 策略不能为空' "$TMPDIR/n5.html" && ok "空 ACL 被拦截并提示" || fail "空 ACL 未提示"
+
+info "验证管理界面 HTTPS 卡片"
+for kw in '管理界面 HTTPS' 'id="admin-tls-enabled"' 'id="admin-tls-body"' 'name="admin_cert_pem"' 'name="admin_key_pem"'; do
+  grep -q "$kw" "$TMPDIR/settings.html" && ok "配置页包含「$kw」" || fail "配置页缺少「$kw」"
+done
+grep -q 'admin-tls-enabled' "$SRC_ROOT/static/app.js" && ok "管理界面 HTTPS 开关联动脚本就绪" || fail "缺少管理界面 HTTPS 联动脚本"
+# 粘贴的 PEM 不成对时必须被拒绝，且不落盘。
+curl -s -b "$JAR" -X POST "$BASE/settings/admin-tls" \
+  --data-urlencode "csrf=${CSRF}" --data-urlencode "enabled=on" --data-urlencode "source=paste" \
+  --data-urlencode "admin_cert_pem=garbage" --data-urlencode "admin_key_pem=garbage" \
+  -o "$TMPDIR/t1.html"
+grep -q '证书或私钥无效' "$TMPDIR/t1.html" && ok "无效 PEM 被拒绝并提示" || fail "无效 PEM 未被拒绝"
+# headscale 没有手动证书时不允许复用。
+curl -s -b "$JAR" -X POST "$BASE/settings/admin-tls" \
+  --data-urlencode "csrf=${CSRF}" --data-urlencode "enabled=on" --data-urlencode "source=reuse" \
+  -o "$TMPDIR/t2.html"
+grep -q '没有手动证书可复用' "$TMPDIR/t2.html" && ok "无可复用证书时被拦截并提示" || fail "无可复用证书时未被拦截"
 
 info "验证客户端一键接入"
 curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys.html"

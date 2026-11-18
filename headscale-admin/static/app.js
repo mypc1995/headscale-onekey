@@ -522,3 +522,79 @@
     document.body.removeChild(ta);
   }
 })();
+
+// 设置页：IPv6 开关联动网段输入框显隐。
+(function () {
+  var toggle = document.getElementById('ipv6_enabled');
+  var wrap = document.getElementById('prefix-v6-wrap');
+  if (!toggle || !wrap) return;
+  toggle.addEventListener('change', function () {
+    wrap.hidden = !toggle.checked;
+    var input = document.getElementById('prefix_v6');
+    if (input && toggle.checked) input.focus();
+  });
+})();
+
+// 网络页：动态行（DNS 服务器 / 搜索域）增删。
+(function () {
+  document.addEventListener('click', function (e) {
+    var add = e.target.closest ? e.target.closest('.row-add') : null;
+    var del = e.target.closest ? e.target.closest('.row-del') : null;
+    if (add) {
+      var wrap = document.getElementById(add.getAttribute('data-target'));
+      if (!wrap) return;
+      var row = add.closest('.dyn-row');
+      var clone = row.cloneNode(true);
+      var input = clone.querySelector('input');
+      if (input) input.value = '';
+      var btn = clone.querySelector('.row-add');
+      if (btn) {
+        btn.classList.remove('row-add');
+        btn.classList.add('row-del');
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+      }
+      wrap.insertBefore(clone, row);
+      if (input) input.focus();
+    } else if (del) {
+      var r = del.closest('.dyn-row');
+      if (r) r.parentNode.removeChild(r);
+    }
+  });
+})();
+
+// 网络页：ACL 规则向导，把规则 JSON 插入编辑框末尾的 acls 数组。
+(function () {
+  var btn = document.getElementById('acl-add');
+  var ta = document.getElementById('acl-editor');
+  if (!btn || !ta) return;
+  btn.addEventListener('click', function () {
+    var src = (document.getElementById('acl-src').value || '').trim() || '*';
+    var dst = (document.getElementById('acl-dst').value || '').trim();
+    var port = (document.getElementById('acl-port').value || '').trim() || '*';
+    if (!dst) {
+      document.getElementById('acl-dst').focus();
+      return;
+    }
+    var rule = '{ "action": "accept", "src": ["' + src + '"], "dst": ["' + dst + ':' + port + '"] }';
+    var v = ta.value;
+    var idx = v.lastIndexOf(']');
+    if (idx < 0) {
+      ta.value = v + '\n' + rule;
+      return;
+    }
+    var before = v.slice(0, idx).replace(/\s+$/, '');
+    var needComma = !/[\[,{]$/.test(before);
+    ta.value = before + (needComma ? ',' : '') + '\n    ' + rule + '\n  ' + v.slice(idx);
+    ta.focus();
+  });
+})();
+
+// 设置页：管理界面 HTTPS 开关联动证书区域显隐。
+(function () {
+  var toggle = document.getElementById('admin-tls-enabled');
+  var body = document.getElementById('admin-tls-body');
+  if (!toggle || !body) return;
+  toggle.addEventListener('change', function () {
+    body.hidden = !toggle.checked;
+  });
+})();

@@ -27,6 +27,7 @@ type App struct {
 	thresholds AlertThresholds
 	tmpl       *template.Template
 	port       string
+	dataFile   string
 	tplDir     string
 	staticDir  string
 }
@@ -61,6 +62,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("加载管理员数据失败: %v", err)
 	}
+	// HTTPS 开启时 Cookie 自动加 Secure。
+	adminTLSOn := loadAdminTLS(*dbFile).Enabled
+	secure := *secureCookie || adminTLSOn
 	initSpec := *initAdmin
 	if initSpec == "" && *adminPass != "" {
 		initSpec = *adminUser + ":" + *adminPass
@@ -141,9 +145,9 @@ func main() {
 
 	hs := NewHSClient()
 	a := &App{
-		store: store, sessions: NewSessionManager(store.DB, *secureCookie), hs: hs, net: NewNetMonitor(),
+		store: store, sessions: NewSessionManager(store.DB, secure), hs: hs, net: NewNetMonitor(),
 		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
-		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir,
+		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir, dataFile: *dbFile,
 	}
 
 	mux := http.NewServeMux()
@@ -168,6 +172,21 @@ func main() {
 	mux.Handle("/", a.sessions.Wrap(p))
 
 	addr := ":" + *port
+	// 管理界面自身的 HTTPS：设置页写入 admin-tls.json 后重启生效。
+	tlsCfg := loadAdminTLS(*dbFile)
+	if tlsCfg.Enabled {
+		if err := tlsCfg.validPair(); err != nil {
+			log.Printf("管理界面 HTTPS 证书不可用，回退为 HTTP：%v", err)
+			tlsCfg.Enabled = false
+		}
+	}
+	if tlsCfg.Enabled {
+		log.Printf("Headscale Admin 监听 %s（HTTPS）", addr)
+		if err := http.ListenAndServeTLS(addr, tlsCfg.CertPath, tlsCfg.KeyPath, mux); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	log.Printf("Headscale Admin 监听 %s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
@@ -391,6 +410,7 @@ func (a *App) registerActions(p *http.ServeMux) {
 	p.HandleFunc("POST /settings/network", a.settingsNetwork)
 	p.HandleFunc("POST /settings/tls", a.settingsTLS)
 	p.HandleFunc("POST /settings/renew", a.settingsRenew)
+	p.HandleFunc("POST /settings/admin-tls", a.settingsAdminTLS)
 	p.HandleFunc("POST /settings/renew-timer", a.settingsRenewTimer)
 	p.HandleFunc("POST /ops/restart", a.restartHeadscale)
 	p.HandleFunc("POST /admins/create", a.adminCreate)

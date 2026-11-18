@@ -100,10 +100,10 @@ Feature coverage:
   - The pre-auth key list has a Type column (single-use/reusable, used/unused, expired, ephemeral badges) and a Note column: notes can be set at creation and edited later in the list. Notes live in the admin UI's local SQLite (keyed by key ID) and are removed when the key is deleted.
   - Newly created API keys are shown in a prominent card with the full value and a copy button (once only, gone after refresh) instead of a fleeting banner; the list only ever shows the prefix.
   - headscale's `preauthkeys list` returns masked keys (`hskey-auth-xxxx-***`); masked entries offer no copy/fill buttons and are labeled "Full value shown only at creation".
-- Network & policy: ACL policy editing, DNS/MagicDNS, DERP toggle, full config editing; every save is backed up and validated with `configtest` first.
+- Network & policy: DNS/MagicDNS, DERP, ACL policy, and full config editing as separate graphical forms — see "Network & policy page"; every save is backed up and validated with `configtest` first.
 - Ops & monitoring: host CPU/memory/load/uptime (3-second sampling, 3-minute charts), node online state with handshake/version/expiry/routes (15-second sampling), threshold alerts, service status, version, certificate expiry, recent logs, service restart, and live bandwidth refreshed every 3 seconds (reads `/proc/net/dev`, with up/down rates, cumulative traffic, per-NIC details, and recent history; degrades to an unavailable notice on non-Linux systems).
 - Administrators: add/remove/edit admin accounts, roles (admin/readonly), password changes.
-- Configuration management: domain, ports and prefixes, HTTPS certificates, and automatic renewal are all managed on the web — see the next section.
+- Configuration management: domain, ports and prefixes (IPv4 required, IPv6 optional via toggle), HTTPS certificates, automatic renewal, and the admin UI's own HTTPS are all managed on the web — see the next section.
 
 #### Configuration page (`/settings`)
 
@@ -124,10 +124,23 @@ Common Headscale settings are consolidated into the web UI so you don't have to 
 | Client listen port | `listen_addr` | Required; `IP:port`, port 1–65535 |
 | Local management port | `grpc_listen_addr` | Required; same format |
 | Metrics port | `metrics_listen_addr` | Optional; same format |
-| Device IPv4 prefix | `prefixes.v4` | Required; CIDR within `100.64.0.0/10` |
-| Device IPv6 prefix | `prefixes.v6` | Optional; CIDR, prefix length no larger than /64 |
+| Device IPv4 prefix | `prefixes.v4` | Required; valid CIDR (not restricted to `100.64.0.0/10`) |
+| Device IPv6 prefix | `prefixes.v6` | Required when "Enable IPv6" is checked; valid CIDR, prefix length no larger than /64 |
 
 Duplicate ports within the same form are rejected outright. A warning appears when the `server_url` port differs from the listen port, preventing lockouts when changing ports.
+
+IPv6 is disabled by default; when the toggle is off, `prefixes.v6` is not written (rather than keeping the previous value). Prefixes are only validated as CIDR — final legality is delegated to `headscale configtest`, so the admin UI never rejects a valid config by being stricter than headscale. Some cloud providers (e.g. Alibaba Cloud ECS) occupy the 100.x range themselves, which conflicts with device virtual addresses; pick any valid range in that case (e.g. `10.99.0.0/24`). Note that changing prefixes only affects devices that join **afterwards** — existing node IPs stay the same.
+
+#### Network & policy page (`/network`)
+
+Network settings can also be maintained as graphical forms on `/network`, each block saved independently:
+
+- **DNS**: `base_domain`, MagicDNS toggle, `override_local_dns` toggle, plus add/remove rows for DNS servers and search domains. Each DNS server is validated (IP, or `https://` / `tls://` / `quic://` URL) and each search domain is validated.
+- **DERP**: built-in relay toggle, `region_id` (default 900), `region_name`.
+- **ACL**: a rule wizard takes source / destination / port and appends a generated `accept` rule to the editor; the body is still a JSON text editor.
+- **Full config editing**: rewrite the entire YAML directly, as a fallback entry point.
+
+All four blocks share the same save path: validate → `headscale configtest` → backup → atomic write → optional restart.
 
 **HTTPS certificates**
 
@@ -144,6 +157,16 @@ The top of the page parses the current certificate and shows its source (automat
 - Built-in ACME: shown as renewed automatically by the headscale process; no extra cron job needed.
 - certbot: shows the `certbot.timer` enabled/running state, last/next run time, and certificate name; you can start/stop the timer, set the daily check time (written to `certbot.timer.d/override.conf` followed by `daemon-reload`), or renew immediately (runs `certbot renew` and restarts headscale).
 - When certbot is not installed, an install hint is shown instead of unusable buttons.
+
+**Admin UI HTTPS**
+
+A separate "Admin UI HTTPS" card at the bottom of the settings page controls whether **the admin web UI you are using right now** is served over HTTPS. It is independent of the certificate settings above, which govern the headscale service:
+
+- A toggle plus a certificate source: paste PEM (certificate and private key as text; verified as a pair, then written to `certs/admin.crt` and `admin.key` in the data directory, mode 0600), or reuse the certificate paths from headscale's manual mode.
+- Once enabled, the admin UI **listens on HTTPS only** and the HTTP port stops responding; the session cookie's `Secure` flag is turned on automatically.
+- If the certificate cannot be loaded, the failure is logged and the UI falls back to HTTP, so one bad configuration cannot lock you out of the ops console.
+- Saving requires a restart of the admin UI to take effect (Go's `http.Server` cannot switch to TLS in place on the same port). Under systemd it restarts automatically; otherwise you are prompted to restart manually.
+- The configuration lives in `admin-tls.json` in the data directory (mode 0600). If the page becomes unreachable because of a certificate problem, delete that file and restart the service to return to HTTP.
 
 **Save and apply flow**
 
@@ -208,13 +231,14 @@ Read-only checks can run on any Linux (including WSL) without creating users, wr
 
 ```bash
 bash test-headscale-cli.sh        # CLI commands, config keys, and configtest
-bash test-headscale-admin.sh      # Admin UI build, login, i18n, themes, bandwidth, host & node monitoring, config validation, CSRF (requires go/curl)
-(cd headscale-admin && go test ./...)   # Unit tests for parsing, node mapping, i18n rendering, and alert rules
+bash test-headscale-admin.sh      # Admin UI build, login, i18n, themes, bandwidth, host & node monitoring, config validation, IPv6 toggle, network forms, CSRF (requires go/curl)
+(cd headscale-admin && go test ./...)   # Unit tests for config parsing, admin UI TLS certificates, node mapping, i18n rendering, and alert rules
 ```
 
 ## Security notes
 
 - The admin UI uses an independent account system: passwords are stored as salted PBKDF2 digests and sessions use HttpOnly cookies; over HTTP the traffic is still plaintext, so on public networks use HTTPS or restrict sources with `--allow-cidr`.
+- Admin UI HTTPS and headscale service HTTPS are two independent configurations and can be enabled separately. Once admin UI HTTPS is on, that port only accepts HTTPS and `http://` requests are not redirected; if a bad certificate makes the page unreachable, delete `admin-tls.json` from the data directory and restart the service to return to HTTP.
 - HTTP mode is plaintext; newer Tailscale clients may require `TS_ALLOW_HTTP_CONTROL_SERVER=1`.
 - HTTPS mode requires the domain to resolve to this host, with ports 80 (certificate validation) and 443 (service) reachable.
 - The built-in DERP relay requires UDP/3478 to be open.

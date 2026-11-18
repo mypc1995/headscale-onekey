@@ -605,3 +605,16 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .api-once .api-once-key { font-weight: 700; }
 #api-once-copy { flex: none; align-self: center; white-space: nowrap; }
 #api-once-copy.copied { color: var(--success); }
+
+/* 网络页动态行与 ACL 规则向导 */
+.dyn-rows { display: flex; flex-direction: column; gap: 8px; }
+.dyn-row { display: flex; gap: 8px; align-items: center; }
+.dyn-row .form-input { flex: 1; min-width: 0; }
+.check-stack { display: flex; flex-direction: column; gap: 10px; justify-content: center; }
+.check-label .key { margin-left: 6px; font-size: .72rem; color: var(--text-tertiary); font-weight: 400; }
+.acl-builder { margin-bottom: 12px; padding: 12px; border: var(--border-width) dashed var(--border); border-radius: var(--radius-md); background: var(--bg-primary); }
+.builder-title { font-weight: 700; font-size: .9rem; margin-bottom: 8px; }
+.builder-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.builder-row .form-input { flex: 1; min-width: 160px; }
+.builder-row .btn { flex: none; white-space: nowrap; }
+.acl-builder .hint { margin: 8px 0 0; }

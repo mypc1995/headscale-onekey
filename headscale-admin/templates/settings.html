@@ -103,10 +103,13 @@
         <span class="field-hint">{{t .Lang "cfg.hint.prefix4"}}</span>
       </div>
       <div class="form-group">
-        <label class="form-label" for="prefix_v6">{{t .Lang "cfg.field.prefixV6"}}<span class="key">prefixes.v6</span></label>
-        <input class="form-input{{if index .Data.Errors "prefix_v6"}} invalid{{end}}" id="prefix_v6" name="prefix_v6" value="{{.Data.PrefixV6}}" placeholder="fd7a:115c:a1e0::/48">
-        {{with index .Data.Errors "prefix_v6"}}<span class="field-error">{{.}}</span>{{end}}
-        <span class="field-hint">{{t .Lang "cfg.hint.prefix6"}}</span>
+        <label class="check-label" for="ipv6_enabled"><input class="form-checkbox" type="checkbox" id="ipv6_enabled" name="ipv6_enabled" {{if .Data.PrefixV6}}checked{{end}}> {{t .Lang "cfg.field.ipv6Enable"}}</label>
+        <div id="prefix-v6-wrap" {{if not .Data.PrefixV6}}hidden{{end}}>
+          <label class="form-label" for="prefix_v6">{{t .Lang "cfg.field.prefixV6"}}<span class="key">prefixes.v6</span></label>
+          <input class="form-input{{if index .Data.Errors "prefix_v6"}} invalid{{end}}" id="prefix_v6" name="prefix_v6" value="{{.Data.PrefixV6}}" placeholder="fd7a:115c:a1e0::/48">
+          {{with index .Data.Errors "prefix_v6"}}<span class="field-error">{{.}}</span>{{end}}
+          <span class="field-hint">{{t .Lang "cfg.hint.prefix6"}}</span>
+        </div>
       </div>
     </div>
     <div class="form-actions">
@@ -255,5 +258,34 @@
     <div class="notice warn">{{icon "x" 17}}<span>{{t .Lang "cfg.renew.noCertbot"}}</span></div>
     {{if eq .Data.Renew.Mode "acme"}}<div class="notice">{{icon "check" 17}}<span>{{t .Lang "cfg.renew.autoNote"}}</span></div>{{end}}
   {{end}}
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 class="card-title">{{icon "lock" 18}} {{t .Lang "adminTLS.section"}}</h2>
+    {{if .Data.AdminHTTPSLive}}<span class="badge success">HTTPS</span>{{else}}<span class="badge muted">HTTP</span>{{end}}</div>
+  <p class="hint">{{t .Lang "adminTLS.intro"}}</p>
+  {{with index .Data.Errors "admin_tls"}}<div class="notice warn">{{icon "x" 17}}<span>{{.}}</span></div>{{end}}
+  <form method="post" action="/settings/admin-tls" class="form-stack" onsubmit="return confirm('{{t .Lang "adminTLS.confirm"}}')">
+    {{template "csrf" .}}
+    <label class="check-label"><input class="form-checkbox" type="checkbox" name="enabled" id="admin-tls-enabled" {{if .Data.AdminTLS.Enabled}}checked{{end}}> {{t .Lang "adminTLS.enable"}}</label>
+    <div id="admin-tls-body" {{if not .Data.AdminTLS.Enabled}}hidden{{end}}>
+      <div class="check-line"><label class="check-label"><input type="radio" name="source" value="paste" {{if or (not .Data.AdminTLS.Enabled) (eq .Data.AdminTLS.CertPath "")}}checked{{end}}> {{t .Lang "adminTLS.sourcePaste"}}</label></div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">{{t .Lang "cfg.field.certPEM"}}</label>
+          <textarea class="form-input mono" name="admin_cert_pem" rows="5" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{t .Lang "cfg.field.keyPEM"}}</label>
+          <textarea class="form-input mono" name="admin_key_pem" rows="5" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+        </div>
+      </div>
+      <p class="hint">{{t .Lang "adminTLS.pasteHint"}}</p>
+      {{if .Data.CertPath}}<div class="check-line"><label class="check-label"><input type="radio" name="source" value="reuse" {{if and .Data.AdminTLS.Enabled (eq .Data.AdminTLS.CertPath .Data.CertPath)}}checked{{end}}> {{t .Lang "adminTLS.sourceReuse" .Data.CertPath}}</label></div>{{end}}
+      {{if .Data.AdminTLS.Enabled}}<p class="hint">{{icon "check" 13}} {{t .Lang "adminTLS.current"}} {{.Data.AdminTLSCert}}（{{.Data.AdminTLS.CertPath}}）</p>{{end}}
+    </div>
+    <div class="notice warn"><span>{{t .Lang "adminTLS.warnSwitch"}}</span></div>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "adminTLS.save"}}</button></div>
+  </form>
 </section>
 {{template "foot" .}}{{end}}

@@ -50,6 +50,11 @@ type ConfigPage struct {
 	Cert  CertInfo
 	Renew RenewInfo
 
+	// 管理界面自身 HTTPS（与 headscale 证书独立）
+	AdminTLS       adminTLSConfig
+	AdminTLSCert   string // 当前证书描述（CN + 到期时间）
+	AdminHTTPSLive bool   // 当前进程是否正以 HTTPS 运行
+
 	Service    string
 	ConfigPath string
 	Warnings   []string
@@ -476,12 +481,9 @@ func validateNetwork(p *ConfigPage, lang string) map[string]string {
 		e["prefix_v4"] = tr(lang, "cfg.err.prefixRequired")
 	} else if _, n, err := net.ParseCIDR(p.PrefixV4); err != nil || n.IP.To4() == nil {
 		e["prefix_v4"] = tr(lang, "cfg.err.prefixV4")
-	} else {
-		_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
-		if !cgnat.Contains(n.IP) {
-			e["prefix_v4"] = tr(lang, "cfg.err.prefixRange")
-		}
 	}
+	// 网段不写死 100.64.0.0/10：部分云厂商（如阿里云 ECS）自身占用该网段，
+	// 合法性交给 headscale configtest 在保存流程中兜底校验。
 	if p.PrefixV6 != "" {
 		_, n, err := net.ParseCIDR(p.PrefixV6)
 		if err != nil || n.IP.To4() != nil {
@@ -899,4 +901,160 @@ func setRenewTimer(enable bool, schedule string, lang string) error {
 		return errors.New(strings.TrimSpace(out + " " + err.Error()))
 	}
 	return nil
+}
+
+// ---- 缩进式 YAML 列表读写（用于 dns.nameservers.global / dns.search_domains 等）----
+// 只按缩进定位，不做完整 YAML 解析；保存后由 headscale configtest 兜底校验。
+
+// findBlockLine 在 [from,to) 行范围内找缩进为 indent 的 `key:` 行，返回行号与块结束行（半开）。
+func blockLine(lines []string, from, to, indent int, key string) (int, int) {
+	prefix := strings.Repeat(" ", indent)
+	keyRe := regexp.MustCompile(`^` + prefix + regexp.QuoteMeta(key) + `:\s*(?:#.*)?$`)
+	for i := from; i < to; i++ {
+		if keyRe.MatchString(lines[i]) {
+			end := to
+			for j := i + 1; j < to; j++ {
+				ln := lines[j]
+				if strings.TrimSpace(ln) == "" || strings.HasPrefix(strings.TrimSpace(ln), "#") {
+					continue
+				}
+				if !strings.HasPrefix(ln, prefix+" ") && !strings.HasPrefix(ln, prefix+"-") {
+					end = j
+					break
+				}
+			}
+			return i, end
+		}
+	}
+	return -1, -1
+}
+
+// listValues 读取 path 指向的列表项（path 每层缩进依次 +2）。
+func listValues(content string, path ...string) []string {
+	lines := strings.Split(content, "\n")
+	from, to, indent := 0, len(lines), 0
+	for _, key := range path {
+		i, end := blockLine(lines, from, to, indent, key)
+		if i < 0 {
+			return nil
+		}
+		from, to, indent = i+1, end, indent+2
+	}
+	var out []string
+	itemPrefix := strings.Repeat(" ", indent) + "- "
+	for i := from; i < to; i++ {
+		if strings.HasPrefix(lines[i], itemPrefix) {
+			v := strings.TrimSpace(strings.TrimPrefix(lines[i], itemPrefix))
+			v = strings.Trim(v, `"'`)
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// setNestedList 用 items 替换 path 指向的列表；中间层缺失时自动补齐，顶层缺失时追加到文件末尾。
+// 传入空 items 时写成 `key: []` 清空列表。
+func setNestedList(content string, items []string, path ...string) (string, error) {
+	if len(path) == 0 {
+		return content, errors.New("empty path")
+	}
+	lines := strings.Split(content, "\n")
+	lines, err := setListRec(lines, 0, len(lines), 0, path, items)
+	if err != nil {
+		return content, err
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// setListRec 返回 [from,to) 区间的替换内容（契约：只返回该区间的新行，不含区间外内容）。
+func setListRec(lines []string, from, to, indent int, path []string, items []string) ([]string, error) {
+	key := path[0]
+	i, end := blockLine(lines, from, to, indent, key)
+	if i < 0 {
+		// 块不存在：在区间开头插入整条路径。
+		add := []string{strings.Repeat(" ", indent) + key + ":"}
+		if len(path) == 1 {
+			add = append(add, listLines(indent+2, items)...)
+		} else {
+			sub, err := setListRec(nil, 0, 0, indent+2, path[1:], items)
+			if err != nil {
+				return nil, err
+			}
+			add = append(add, sub...)
+		}
+		out := append([]string{}, add...)
+		out = append(out, lines[from:to]...)
+		return out, nil
+	}
+	if len(path) == 1 {
+		// 目标列表：删除旧条目行，插入新条目；空列表写成内联 []。
+		var out []string
+		out = append(out, lines[from:i]...)
+		if len(items) == 0 {
+			out = append(out, strings.Repeat(" ", indent)+key+": []")
+		} else {
+			out = append(out, lines[i])
+			out = append(out, listLines(indent+2, items)...)
+		}
+		itemPrefix := strings.Repeat(" ", indent+2) + "- "
+		for j := i + 1; j < end; j++ {
+			if strings.HasPrefix(lines[j], itemPrefix) {
+				continue
+			}
+			out = append(out, lines[j])
+		}
+		out = append(out, lines[end:to]...)
+		return out, nil
+	}
+	// 中间层：子块内容由递归结果替换。
+	sub, err := setListRec(lines, i+1, end, indent+2, path[1:], items)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	out = append(out, lines[from:i+1]...)
+	out = append(out, sub...)
+	out = append(out, lines[end:to]...)
+	return out, nil
+}
+
+func listLines(indent int, items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, strings.Repeat(" ", indent)+"- "+yamlScalar(it))
+	}
+	return out
+}
+
+// setDeepKey 设置三级嵌套的标量键（如 derp.server.enabled）。
+func setDeepKey(content, top, mid, key, value string) (string, error) {
+	lines := strings.Split(content, "\n")
+	ti, tend := blockLine(lines, 0, len(lines), 0, top)
+	if ti < 0 {
+		return content, fmt.Errorf("配置中缺少 %s 块", top)
+	}
+	mi, mend := blockLine(lines, ti+1, tend, 2, mid)
+	if mi < 0 {
+		// 中间块缺失：插入 mid 块与目标键。
+		add := []string{"  " + mid + ":", "    " + key + ": " + value}
+		out := append([]string{}, lines[:ti+1]...)
+		out = append(out, add...)
+		out = append(out, lines[ti+1:]...)
+		return strings.Join(out, "\n"), nil
+	}
+	keyRe := regexp.MustCompile(`^    ` + regexp.QuoteMeta(key) + `:.*$`)
+	for j := mi + 1; j < mend; j++ {
+		if keyRe.MatchString(lines[j]) {
+			lines[j] = "    " + key + ": " + value
+			return strings.Join(lines, "\n"), nil
+		}
+	}
+	// 键缺失：插入到 mid 块开头。
+	out := append([]string{}, lines[:mi+1]...)
+	out = append(out, "    "+key+": "+value)
+	out = append(out, lines[mi+1:]...)
+	return strings.Join(out, "\n"), nil
 }

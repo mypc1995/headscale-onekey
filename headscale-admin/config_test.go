@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,5 +70,101 @@ func TestValidateTLSManualWithoutPaste(t *testing.T) {
 	}
 	if _, ok := errs["tls_cert_path"]; ok {
 		t.Fatalf("不应再出现 tls_cert_path 字段错误: %v", errs)
+	}
+}
+
+func TestNestedListReadWrite(t *testing.T) {
+	base := "server_url: http://x:8080\n" +
+		"dns:\n" +
+		"  magic_dns: true\n" +
+		"  base_domain: hs.example.com\n" +
+		"  nameservers:\n" +
+		"    global:\n" +
+		"      - 223.5.5.5\n" +
+		"      - 119.29.29.29\n" +
+		"    split: {}\n" +
+		"  search_domains: []\n" +
+		"derp:\n" +
+		"  server:\n" +
+		"    enabled: false\n"
+	got := listValues(base, "dns", "nameservers", "global")
+	if len(got) != 2 || got[0] != "223.5.5.5" || got[1] != "119.29.29.29" {
+		t.Fatalf("global = %v", got)
+	}
+	if got := listValues(base, "dns", "search_domains"); len(got) != 0 {
+		t.Fatalf("search = %v", got)
+	}
+
+	// 替换列表，兄弟键不受影响
+	next, err := setNestedList(base, []string{"1.1.1.1", "8.8.8.8"}, "dns", "nameservers", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listValues(next, "dns", "nameservers", "global"); len(got) != 2 || got[0] != "1.1.1.1" {
+		t.Fatalf("after set, global = %v\n%s", got, next)
+	}
+	if !strings.Contains(next, "split: {}") {
+		t.Fatalf("sibling lost:\n%s", next)
+	}
+
+	// 清空列表写成 []
+	next, err = setNestedList(next, nil, "dns", "nameservers", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "global: []") {
+		t.Fatalf("empty list:\n%s", next)
+	}
+
+	// 中间层缺失时补齐
+	missing := "dns:\n  magic_dns: true\n  base_domain: x\n"
+	next, err = setNestedList(missing, []string{"9.9.9.9"}, "dns", "nameservers", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listValues(next, "dns", "nameservers", "global"); len(got) != 1 || got[0] != "9.9.9.9" {
+		t.Fatalf("auto-created:\n%s", next)
+	}
+	if !strings.Contains(next, "magic_dns: true") {
+		t.Fatalf("dns block corrupted:\n%s", next)
+	}
+
+	// 顶层块缺失时追加
+	next, err = setNestedList("server_url: http://x\n", []string{"1.0.0.1"}, "dns", "nameservers", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := listValues(next, "dns", "nameservers", "global"); len(got) != 1 || got[0] != "1.0.0.1" {
+		t.Fatalf("top-level append:\n%s", next)
+	}
+}
+
+func TestSetDeepKey(t *testing.T) {
+	base := `derp:
+  server:
+    enabled: false
+    region_id: 999
+`
+	next, err := setDeepKey(base, "derp", "server", "enabled", "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "enabled: true") || !strings.Contains(next, "region_id: 999") {
+		t.Fatalf("set existing:\n%s", next)
+	}
+	next, err = setDeepKey(next, "derp", "server", "region_name", "test-relay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "region_name: test-relay") {
+		t.Fatalf("add key:\n%s", next)
+	}
+	// 中间块缺失时自动补齐
+	next, err = setDeepKey("derp:\n  urls: []\n", "derp", "server", "enabled", "true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "server:") || !strings.Contains(next, "enabled: true") || !strings.Contains(next, "urls: []") {
+		t.Fatalf("add mid block:\n%s", next)
 	}
 }

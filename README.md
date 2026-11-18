@@ -100,10 +100,10 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
   - 预授权密钥列表带「类型」标识（一次性/可复用、已使用/未使用、已失效、临时节点徽章）和「备注」列：创建时可填备注，列表里可随时修改，备注存在管理界面本地 SQLite（按密钥 ID 关联），删除密钥时备注一并清理。
   - API key 创建后在醒目卡片中展示完整值并附复制按钮（仅显示一次，刷新即消失），不再只出现在一次性提示条里；列表中仅能看到前缀。
   - headscale 的 `preauthkeys list` 只返回打码密钥（`hskey-auth-xxxx-***`），打码条目不提供复制/填入命令，并标注「仅创建时可见完整值」。
-- 网络与策略：ACL 策略编辑、DNS/MagicDNS、DERP 开关、完整配置编辑；保存前自动备份并做 `configtest` 校验。
+- 网络与策略：DNS/MagicDNS、DERP、ACL 策略、完整配置编辑，分块图形化表单，见「网络与策略页」；保存前自动备份并做 `configtest` 校验。
 - 运维与监控：本机 CPU/内存/负载/运行时长（3 秒采样、3 分钟曲线）、节点在线状态与握手/版本/到期/路由（15 秒采样）、阈值告警、服务状态、版本、证书到期、最近日志、重启服务，以及每 3 秒刷新的实时网速（读取 `/proc/net/dev`，含上下行速率、累计流量、各网卡明细与近期曲线；非 Linux 自动降级为不可用提示）。
 - 管理员：管理员增删改、角色（admin/readonly）、修改密码。
-- 配置管理：域名、端口与网段、HTTPS 证书、证书自动续期集中在网页端，见下节。
+- 配置管理：域名、端口与网段（IPv4 必填、IPv6 可选开关）、HTTPS 证书、证书自动续期、管理界面自身的 HTTPS 集中在网页端，见下节。
 
 #### 配置管理页（`/settings`）
 
@@ -124,10 +124,23 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 | 客户端连接端口 | `listen_addr` | 必填；`IP:端口`，端口 1–65535 |
 | 本机管理端口 | `grpc_listen_addr` | 必填；格式同上 |
 | 监控数据端口 | `metrics_listen_addr` | 可留空；格式同上 |
-| 设备 IPv4 网段 | `prefixes.v4` | 必填；CIDR 且必须位于 `100.64.0.0/10` 内 |
-| 设备 IPv6 网段 | `prefixes.v6` | 可留空；CIDR，掩码不能大于 /64 |
+| 设备 IPv4 网段 | `prefixes.v4` | 必填；合法 CIDR（不限定在 `100.64.0.0/10` 内） |
+| 设备 IPv6 网段 | `prefixes.v6` | 勾选「启用 IPv6」后必填；合法 CIDR，掩码不能大于 /64 |
 
 同一表单内端口重复会被直接拦截。`server_url` 端口与监听端口不一致时给出警告，避免改端口时两边互相锁死。
+
+IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿用旧值）。网段只校验 CIDR 格式，合法性最终交给 `headscale configtest` 兜底，避免管理界面比 headscale 更严格而拒绝合法配置。部分云厂商（如阿里云 ECS）自身占用 100 段，与设备虚拟地址冲突，此时可改成任意合法网段（如 `10.99.0.0/24`）。注意修改网段只影响**之后新加入**的设备，存量节点 IP 不变。
+
+#### 网络与策略页（`/network`）
+
+除配置管理页外，网络相关配置也可在 `/network` 以图形化表单维护，每块独立保存：
+
+- **DNS**：`base_domain`、MagicDNS 开关、`override_local_dns` 开关、DNS 服务器与搜索域的动态增删行。DNS 服务器逐条校验（IP 或 `https://` / `tls://` / `quic://` 地址），搜索域逐条校验。
+- **DERP**：内置中继开关、`region_id`（默认 900）、`region_name`。
+- **ACL**：规则向导填「来源 / 目标 / 端口」，生成单条 `accept` 规则插入编辑器末尾；主体仍是 JSON 编辑框。
+- **完整配置编辑**：直接改写整份 YAML，作为兜底入口。
+
+四块保存都走同一条链路：校验 → `headscale configtest` → 备份 → 原子写入 → 可选重启。
 
 **HTTPS 证书**
 
@@ -144,6 +157,16 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 - 内置 ACME：显示由 headscale 进程自动续期，不需要额外定时任务。
 - certbot：显示 `certbot.timer` 的启用与运行状态、上次/下次执行时间、证书名；可启停定时器、设置每日检查时间（写入 `certbot.timer.d/override.conf` 后 `daemon-reload`），也可立即续期（执行 `certbot renew` 后重启 headscale）。
 - 未安装 certbot 时显示安装提示，不展示不可用的按钮。
+
+**管理界面 HTTPS**
+
+配置管理页底部有独立的「管理界面 HTTPS」卡片，控制的是**你现在访问的这个管理网页**是否走 HTTPS，与上面管 headscale 服务的证书是两套独立配置：
+
+- 开关 + 证书来源二选一：粘贴 PEM（证书与私钥文本，校验配对后写入数据目录 `certs/admin.crt` / `admin.key`，权限 0600），或复用 headscale 手动模式下的证书文件路径。
+- 启用后管理界面**只监听 HTTPS**，HTTP 端口不再响应；Cookie 的 `Secure` 标记随 HTTPS 自动开启。
+- 证书不可用时记日志并回退 HTTP，避免一次错误配置把运维入口锁死。
+- 保存后需要重启管理界面生效（Go 的 `http.Server` 无法在同一端口原地切换 TLS）。systemd 环境下自动重启，非 systemd 环境提示手动重启。
+- 配置存放在数据目录的 `admin-tls.json`（权限 0600）。若因证书问题无法访问网页，删除该文件并重启服务即可恢复 HTTP。
 
 **保存与应用流程**
 
@@ -208,13 +231,14 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 ```bash
 bash test-headscale-cli.sh        # 验证 CLI 命令、配置键与 configtest
-bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验与 CSRF（需 go/curl）
-(cd headscale-admin && go test ./...)   # 解析、节点映射、双语展示与告警规则单元测试
+bash test-headscale-admin.sh      # 验证管理界面编译、登录、双语、主题、网速、本机与节点监控、配置校验、IPv6 开关、网络表单与 CSRF（需 go/curl）
+(cd headscale-admin && go test ./...)   # 配置解析、管理界面 HTTPS 证书、节点映射、双语展示与告警规则单元测试
 ```
 
 ## 安全提示
 
 - 管理界面走独立账号体系，密码经 PBKDF2 加盐摘要保存，登录态为 HttpOnly Cookie；HTTP 模式下传输仍是明文，公网使用请配合 HTTPS 或 `--allow-cidr` 限制来源。
+- 管理界面 HTTPS 与 headscale 服务的 HTTPS 是两套独立配置，可分别启用。启用管理界面 HTTPS 后该端口只接受 HTTPS，请求 `http://` 不会跳转；证书异常导致无法访问时，删除数据目录的 `admin-tls.json` 并重启服务即可恢复 HTTP。
 - HTTP 模式为明文，较新的 Tailscale 客户端可能需要设置 `TS_ALLOW_HTTP_CONTROL_SERVER=1`。
 - HTTPS 模式需要域名正确解析到本机，并确保 80（证书验证）和 443（服务）端口可达。
 - 启用内置 DERP 时需放行 UDP/3478。

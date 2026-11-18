@@ -1,9 +1,15 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -29,14 +35,19 @@ type keysData struct {
 }
 
 type networkData struct {
-	ACL         string
-	Config      string
-	PolicyPath  string
-	BaseDomain  string
-	MagicDNS    string
-	DERPEnabled string
-	ServerURL   string
-	ListenAddr  string
+	ACL            string
+	Config         string
+	PolicyPath     string
+	BaseDomain     string
+	MagicDNS       string
+	OverrideLocal  string
+	Nameservers    []string
+	SearchDomains  []string
+	DERPEnabled    string
+	DERPRegionID   string
+	DERPRegionName string
+	ServerURL      string
+	ListenAddr     string
 }
 
 type opsData struct {
@@ -134,7 +145,12 @@ func (a *App) networkPage(w http.ResponseWriter, r *http.Request) {
 		d.Config = v
 		d.BaseDomain = nestedValue(v, "dns", "base_domain")
 		d.MagicDNS = nestedValue(v, "dns", "magic_dns")
+		d.OverrideLocal = nestedValue(v, "dns", "override_local_dns")
+		d.Nameservers = listValues(v, "dns", "nameservers", "global")
+		d.SearchDomains = listValues(v, "dns", "search_domains")
 		d.DERPEnabled = deepValue(v, "derp", "enabled")
+		d.DERPRegionID = deepValue(v, "derp", "region_id")
+		d.DERPRegionName = deepValue(v, "derp", "region_name")
 		d.ServerURL = topValue(v, "server_url")
 		d.ListenAddr = topValue(v, "listen_addr")
 	}
@@ -507,39 +523,154 @@ func (a *App) saveDNS(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
+	lang := langFrom(r)
 	base := strings.TrimSpace(r.FormValue("base_domain"))
 	if base == "" {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.baseRequired"))
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.baseRequired"))
+		return
+	}
+	// DNS 服务器与搜索域来自表单的动态行，逐条校验。
+	ns, err := cleanRows(r.Form["ns"])
+	if err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.invalidNS", err.Error()))
+		return
+	}
+	search, err := cleanRows(r.Form["search"])
+	if err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.invalidSearch", err.Error()))
+		return
+	}
+	for _, v := range ns {
+		if !validNameserver(v) {
+			a.redirectWithFlash(w, r, "/network", tr(lang, "msg.invalidNS", v))
+			return
+		}
+	}
+	for _, v := range search {
+		if !validSearchDomain(v) {
+			a.redirectWithFlash(w, r, "/network", tr(lang, "msg.invalidSearch", v))
+			return
+		}
+	}
+
+	next, err := a.hs.ReadConfigText()
+	if err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.saveFail", err.Error()))
 		return
 	}
 	magic := "false"
 	if r.FormValue("magic_dns") == "on" {
 		magic = "true"
 	}
-	if err := a.hs.UpdateNested("dns", "base_domain", base, langFrom(r)); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
+	override := "false"
+	if r.FormValue("override_local_dns") == "on" {
+		override = "true"
+	}
+	for _, kv := range [][2]string{{"base_domain", yamlScalar(base)}, {"magic_dns", magic}, {"override_local_dns", override}} {
+		if next, err = setNestedKey(next, "dns", kv[0], kv[1]); err != nil {
+			a.redirectWithFlash(w, r, "/network", tr(lang, "msg.saveFail", err.Error()))
+			return
+		}
+	}
+	if next, err = setNestedList(next, ns, "dns", "nameservers", "global"); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.saveFail", err.Error()))
 		return
 	}
-	if err := a.hs.UpdateNested("dns", "magic_dns", magic, langFrom(r)); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
+	if next, err = setNestedList(next, search, "dns", "search_domains"); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.saveFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.dnsSaved"))
+	a.applyNetworkConfig(w, r, next, "msg.dnsSaved")
 }
 
 func (a *App) saveDERP(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
+	lang := langFrom(r)
 	enabled := "false"
 	if r.FormValue("enabled") == "on" {
 		enabled = "true"
 	}
-	if err := a.hs.UpdateDERP("enabled", enabled, langFrom(r)); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
+	regionID := strings.TrimSpace(r.FormValue("region_id"))
+	if regionID == "" {
+		regionID = "900"
+	}
+	if _, err := strconv.ParseUint(regionID, 10, 16); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.invalidRegionID", regionID))
 		return
 	}
-	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.derpSaved"))
+	regionName := strings.TrimSpace(r.FormValue("region_name"))
+	if regionName == "" {
+		regionName = "Headscale Embedded DERP"
+	}
+
+	next, err := a.hs.ReadConfigText()
+	if err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.saveFail", err.Error()))
+		return
+	}
+	for _, kv := range [][2]string{{"enabled", enabled}, {"region_id", regionID}, {"region_name", yamlScalar(regionName)}} {
+		if next, err = setDeepKey(next, "derp", "server", kv[0], kv[1]); err != nil {
+			a.redirectWithFlash(w, r, "/network", tr(lang, "msg.saveFail", err.Error()))
+			return
+		}
+	}
+	a.applyNetworkConfig(w, r, next, "msg.derpSaved")
+}
+
+// applyNetworkConfig 与配置管理页同一套保存逻辑：configtest 校验 → 备份 → 原子写入 → 可选重启。
+func (a *App) applyNetworkConfig(w http.ResponseWriter, r *http.Request, next, successKey string) {
+	lang := langFrom(r)
+	restart := r.FormValue("apply_now") == "on"
+	bak, err := a.hs.ApplyConfig(next, restart, lang)
+	if err != nil {
+		a.redirectWithFlash(w, r, "/network", err.Error())
+		return
+	}
+	msg := tr(lang, successKey)
+	if restart {
+		msg += tr(lang, "cfg.msg.applied")
+	} else {
+		msg += tr(lang, "cfg.msg.pendingRestart")
+	}
+	if bak != "" {
+		msg += tr(lang, "cfg.msg.backup", filepath.Base(bak))
+	}
+	a.redirectWithFlash(w, r, "/network", msg)
+}
+
+// cleanRows 清洗动态行表单值：去空白、去空行。
+func cleanRows(vals []string) ([]string, error) {
+	var out []string
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+// validNameserver 接受 IP（v4/v6）或带协议的 DoH/DoT/DoQ 地址。
+func validNameserver(v string) bool {
+	if net.ParseIP(v) != nil {
+		return true
+	}
+	if u, err := url.Parse(v); err == nil {
+		switch u.Scheme {
+		case "https", "tls", "quic":
+			return u.Host != ""
+		}
+	}
+	return false
+}
+
+// validSearchDomain 校验搜索域格式（字母数字、点、短横线）。
+var searchDomainRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$`)
+
+func validSearchDomain(v string) bool {
+	return searchDomainRE.MatchString(v)
 }
 
 func (a *App) restartHeadscale(w http.ResponseWriter, r *http.Request) {
@@ -645,7 +776,35 @@ func (a *App) monitorAPI(w http.ResponseWriter, r *http.Request) {
 // ---------- Headscale 配置管理 ----------
 
 func (a *App) settingsPage(w http.ResponseWriter, r *http.Request) {
-	a.render(w, r, "settings", a.hs.loadConfigPage(langFrom(r)))
+	a.render(w, r, "settings", a.loadSettingsPage(langFrom(r), r.TLS != nil))
+}
+
+// loadSettingsPage 在 headscale 配置之外补充管理界面自身的 HTTPS 状态。
+func (a *App) loadSettingsPage(lang string, liveTLS bool) *ConfigPage {
+	p := a.hs.loadConfigPage(lang)
+	p.AdminTLS = loadAdminTLS(a.dataFile)
+	p.AdminHTTPSLive = liveTLS
+	if p.AdminTLS.Enabled {
+		p.AdminTLSCert = describeCertFile(p.AdminTLS.CertPath, lang)
+	}
+	return p
+}
+
+// describeCertFile 简述证书文件（CN 与到期时间），用于管理界面 HTTPS 状态展示。
+func describeCertFile(path, lang string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return tr(lang, "adminTLS.certUnreadable")
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return tr(lang, "adminTLS.certUnreadable")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return tr(lang, "adminTLS.certUnreadable")
+	}
+	return tr(lang, "adminTLS.certInfo", cert.Subject.CommonName, cert.NotAfter.Format("2006-01-02"))
 }
 
 // settingsDomain 保存域名与接入配置（server_url / MagicDNS 根域 / MagicDNS 开关）。
@@ -685,9 +844,17 @@ func (a *App) settingsNetwork(w http.ResponseWriter, r *http.Request) {
 	p.MetricsListenAddr = strings.TrimSpace(r.FormValue("metrics_listen_addr"))
 	p.GRPCListenAddr = strings.TrimSpace(r.FormValue("grpc_listen_addr"))
 	p.PrefixV4 = strings.TrimSpace(r.FormValue("prefix_v4"))
-	p.PrefixV6 = strings.TrimSpace(r.FormValue("prefix_v6"))
+	// IPv6 是可选开关：未勾选时清空 v6 网段，而不是沿用旧值。
+	if r.FormValue("ipv6_enabled") == "on" {
+		p.PrefixV6 = strings.TrimSpace(r.FormValue("prefix_v6"))
+	} else {
+		p.PrefixV6 = ""
+	}
 
 	errs := validateNetwork(p, lang)
+	if r.FormValue("ipv6_enabled") == "on" && p.PrefixV6 == "" {
+		errs["prefix_v6"] = tr(lang, "cfg.err.prefixV6Required")
+	}
 	// 监听端口变化会影响 server_url 端口，这里一并校验。
 	for k, v := range validateDomain(p, lang) {
 		if k == "listen_addr" {
@@ -821,6 +988,76 @@ func (a *App) applySettings(w http.ResponseWriter, r *http.Request, p *ConfigPag
 }
 
 // settingsRenew 手动触发 certbot 续期，成功后续期并重启 headscale。
+// settingsAdminTLS 配置管理界面自身的 HTTPS：启用/关闭、证书来源（复用 headscale 手动证书或粘贴 PEM）。
+// 保存后写入 admin-tls.json 并重启管理界面进程生效；启用后网页访问必须走 HTTPS。
+func (a *App) settingsAdminTLS(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	lang := langFrom(r)
+	fail := func(key string, args ...any) {
+		p := a.loadSettingsPage(lang, r.TLS != nil)
+		p.Errors = map[string]string{"admin_tls": tr(lang, key, args...)}
+		a.render(w, r, "settings", p)
+	}
+
+	cfg := loadAdminTLS(a.dataFile)
+	cfg.Enabled = r.FormValue("enabled") == "on"
+
+	if cfg.Enabled {
+		switch r.FormValue("source") {
+		case "reuse":
+			// 复用 headscale 手动模式的证书文件。
+			content, err := a.hs.ReadConfigText()
+			if err != nil {
+				fail("msg.saveFail", err.Error())
+				return
+			}
+			cfg.CertPath = topValue(content, "tls_cert_path")
+			cfg.KeyPath = topValue(content, "tls_key_path")
+			if cfg.CertPath == "" || cfg.KeyPath == "" {
+				fail("adminTLS.err.noHeadscaleCert")
+				return
+			}
+			if err := cfg.validPair(); err != nil {
+				fail("adminTLS.err.reuseInvalid", err.Error())
+				return
+			}
+		default: // paste
+			certPEM := strings.TrimSpace(r.FormValue("admin_cert_pem"))
+			keyPEM := strings.TrimSpace(r.FormValue("admin_key_pem"))
+			if certPEM == "" && keyPEM == "" && cfg.CertPath != "" && cfg.KeyPath != "" {
+				// 两项留空 = 沿用已有证书，但配对必须仍然有效。
+				if err := cfg.validPair(); err != nil {
+					fail("adminTLS.err.keepInvalid", err.Error())
+					return
+				}
+			} else {
+				certPath, keyPath, err := writeAdminCerts(a.dataFile, certPEM, keyPEM)
+				if err != nil {
+					fail("adminTLS.err.pemInvalid", err.Error())
+					return
+				}
+				cfg.CertPath, cfg.KeyPath = certPath, keyPath
+			}
+		}
+	}
+
+	if err := saveAdminTLS(a.dataFile, cfg); err != nil {
+		fail("msg.saveFail", err.Error())
+		return
+	}
+	if err := restartSelf(); err != nil {
+		a.redirectWithFlash(w, r, "/settings", tr(lang, "adminTLS.savedManualRestart"))
+		return
+	}
+	if cfg.Enabled {
+		a.redirectWithFlash(w, r, "/settings", tr(lang, "adminTLS.savedOn", r.Host))
+	} else {
+		a.redirectWithFlash(w, r, "/settings", tr(lang, "adminTLS.savedOff", r.Host))
+	}
+}
+
 func (a *App) settingsRenew(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return

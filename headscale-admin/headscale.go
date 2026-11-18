@@ -341,29 +341,6 @@ func (c *HSClient) UpdateTop(key string, value string) error {
 	return c.chownConfig()
 }
 
-func (c *HSClient) UpdateNested(block string, key string, value string, lang ...string) error {
-	L := reqLang(lang)
-	b, err := c.configBytes()
-	if err != nil {
-		return err
-	}
-	re := regexp.MustCompile(`(?ms)(^` + regexp.QuoteMeta(block) + `:\s*\n)((?:[ \t]+.*\n?)*)`)
-	loc := re.FindStringSubmatchIndex(string(b))
-	if loc == nil {
-		return errors.New(tr(L, "hs.noConfigBlock", block))
-	}
-	inner := b[loc[2]:loc[3]]
-	innerNext, err := replaceLine(string(inner), `(?m)^  `+regexp.QuoteMeta(key)+`:.*$`, "  "+key+": "+value, L)
-	if err != nil {
-		return err
-	}
-	next := string(b[:loc[2]]) + innerNext + string(b[loc[3]:])
-	if err := os.WriteFile(c.Config, []byte(next), 0600); err != nil {
-		return err
-	}
-	return c.chownConfig()
-}
-
 func (c *HSClient) chownConfig() error {
 	_ = exec.Command("chown", "headscale:headscale", c.Config).Run()
 	return nil

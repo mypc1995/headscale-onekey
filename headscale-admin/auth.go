@@ -431,7 +431,13 @@ func (m *SessionManager) Delete(token string) {
 }
 
 func (m *SessionManager) SetFlash(token, msg string) {
-	fallbackStore.Delete(token)
+	// 内存兜底会话没有数据库行，只更新内存副本；不能删除它，
+	// 否则下一次请求会找不到会话，用户被莫名登出。
+	if v, ok := fallbackStore.Load(token); ok {
+		if s, ok := v.(*Session); ok {
+			s.Flash = msg
+		}
+	}
 	_, _ = m.db.Exec(`UPDATE sessions SET flash=? WHERE token=?`, msg, token)
 }
 
@@ -439,8 +445,30 @@ func (m *SessionManager) TakeFlash(token string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var msg string
-	// 单条语句取出并清空，避免两次往返之间出现并发写入。
-	if err := m.db.QueryRow(`UPDATE sessions SET flash='' WHERE token=? RETURNING flash`, token).Scan(&msg); err != nil {
+	// SQLite 的 UPDATE ... RETURNING 返回的是更新之后的值，而这里清空的正是
+	// flash 本身，用 RETURNING 取出来必然是空串（提示消息永远显示不出来）。
+	// 因此必须在同一个事务里先读出旧值再清空，保证只取一次。
+	tx, err := m.db.Begin()
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.QueryRow(`SELECT flash FROM sessions WHERE token=?`, token).Scan(&msg); err != nil {
+		// 数据库里没有该会话（内存兜底会话），回退到内存副本。
+		if v, ok := fallbackStore.Load(token); ok {
+			if s, ok := v.(*Session); ok {
+				msg = s.Flash
+				s.Flash = ""
+			}
+		}
+		return msg
+	}
+	if msg != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET flash='' WHERE token=?`, token); err != nil {
+			return ""
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return ""
 	}
 	return msg
