@@ -112,6 +112,70 @@ func TestAdminTLSWriteCerts(t *testing.T) {
 	}
 }
 
+// TestResolveAdminTLSFallback 覆盖「配置启用 HTTPS 但证书不可用」的回退行为，
+// 以及随之而来的 Cookie Secure 标记。
+//
+// 这条曾经是个真缺陷：Secure 标记按配置里的 Enabled 算，而证书可用性在
+// 启动流程的更后面才检查。于是回退成 HTTP 后 Cookie 仍带 Secure，浏览器
+// 明文下不发送该 Cookie → 登录态失效 → 运维入口被锁死，
+// 而「回退 HTTP 以免锁死」这个兜底正是要防这件事。
+func TestResolveAdminTLSFallback(t *testing.T) {
+	dir := t.TempDir()
+	dataFile := filepath.Join(dir, "headscale-admin.db")
+
+	// 未配置文件：既不启用 HTTPS，也不该给 Cookie 加 Secure。
+	_, tlsOn := resolveAdminTLS(dataFile)
+	if tlsOn {
+		t.Fatal("未配置时不应判定为 HTTPS 生效")
+	}
+	if sessionCookieSecure(false, tlsOn) {
+		t.Fatal("未配置时 Cookie 不应带 Secure")
+	}
+
+	// 配置启用、但证书文件不存在：必须回退为 HTTP。
+	broken := adminTLSConfig{
+		Enabled:  true,
+		CertPath: filepath.Join(dir, "missing.crt"),
+		KeyPath:  filepath.Join(dir, "missing.key"),
+	}
+	if err := saveAdminTLS(dataFile, broken); err != nil {
+		t.Fatal(err)
+	}
+	cfg, tlsOn := resolveAdminTLS(dataFile)
+	if tlsOn {
+		t.Fatal("证书不可用时不应判定为 HTTPS 生效")
+	}
+	if cfg.Enabled {
+		t.Fatal("证书不可用时生效状态应为关闭")
+	}
+	// 回退后的关键不变量：Cookie 不能带 Secure，否则明文下登不进去。
+	if sessionCookieSecure(false, tlsOn) {
+		t.Fatal("回退 HTTP 后 Cookie 不应带 Secure")
+	}
+
+	// 换成真实可用的证书：应判定为 HTTPS 生效，Cookie 随之带 Secure。
+	certPEM, keyPEM := makePair(t, "admin.example.com")
+	certPath, keyPath, err := writeAdminCerts(dataFile, certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveAdminTLS(dataFile, adminTLSConfig{Enabled: true, CertPath: certPath, KeyPath: keyPath}); err != nil {
+		t.Fatal(err)
+	}
+	_, tlsOn = resolveAdminTLS(dataFile)
+	if !tlsOn {
+		t.Fatal("证书可用时应判定为 HTTPS 生效")
+	}
+	if !sessionCookieSecure(false, tlsOn) {
+		t.Fatal("HTTPS 生效时 Cookie 应带 Secure")
+	}
+
+	// 强制 Secure（反向代理终止 TLS 的场景）仍然生效。
+	if !sessionCookieSecure(true, false) {
+		t.Fatal("强制 Secure 时应带 Secure")
+	}
+}
+
 // TestAdminTLSReuseExisting 覆盖「两项留空 = 沿用已有证书」时仍需重新校验配对。
 func TestAdminTLSReuseExisting(t *testing.T) {
 	dir := t.TempDir()

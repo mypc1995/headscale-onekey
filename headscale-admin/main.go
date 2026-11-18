@@ -70,9 +70,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("加载管理员数据失败: %v", err)
 	}
-	// HTTPS 开启时 Cookie 自动加 Secure。
-	adminTLSOn := loadAdminTLS(*dbFile).Enabled
-	secure := *secureCookie || adminTLSOn
+	// 管理界面自身的 HTTPS：设置页写入 admin-tls.json 后重启生效。
+	//
+	// 必须在这里就解析出「实际生效」的状态，因为监听协议和 Cookie 的 Secure
+	// 标记都要用它。之前 Secure 用的是配置里的 Enabled 标志，而证书可用性在
+	// 后面才检查：配置写着启用 HTTPS 但证书坏了 → 服务回退成 HTTP，Cookie 却
+	// 仍带 Secure，浏览器明文下不发送该 Cookie，登录态必然失效、运维入口被
+	// 锁死——恰好是这个兜底本来要防的事。
+	tlsCfg, tlsOn := resolveAdminTLS(*dbFile)
+	// HTTPS 生效时 Cookie 自动加 Secure。
+	secure := sessionCookieSecure(*secureCookie, tlsOn)
 	initSpec := *initAdmin
 	if initSpec == "" && *adminPass != "" {
 		initSpec = *adminUser + ":" + *adminPass
@@ -188,14 +195,6 @@ func main() {
 	mux.Handle("/", a.sessions.Wrap(p))
 
 	addr := ":" + *port
-	// 管理界面自身的 HTTPS：设置页写入 admin-tls.json 后重启生效。
-	tlsCfg := loadAdminTLS(*dbFile)
-	if tlsCfg.Enabled {
-		if err := tlsCfg.validPair(); err != nil {
-			log.Printf("管理界面 HTTPS 证书不可用，回退为 HTTP：%v", err)
-			tlsCfg.Enabled = false
-		}
-	}
 	// 必须显式设置超时：http.ListenAndServe 的默认 Server 一个超时都没有，
 	// 慢速连接（Slowloris）可以把连接数占满，拖垮整台机器。
 	srv := &http.Server{
@@ -207,7 +206,7 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	if tlsCfg.Enabled {
+	if tlsOn {
 		log.Printf("Headscale Admin 监听 %s（HTTPS）", addr)
 		if err := srv.ListenAndServeTLS(tlsCfg.CertPath, tlsCfg.KeyPath); err != nil {
 			log.Fatal(err)

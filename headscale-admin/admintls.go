@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,15 +102,50 @@ func writeAdminCerts(dataFile, certPEM, keyPEM string) (certPath, keyPath string
 	return certPath, keyPath, nil
 }
 
+// resolveAdminTLS 解析管理界面 HTTPS 的**实际生效**状态。
+//
+// 配置里写着启用、但证书不可用（文件被删、损坏、路径写错）时，记日志并回退为
+// HTTP。第二个返回值是「真的走 HTTPS」——监听协议和 Cookie 的 Secure 标记
+// 都必须以它为准，不能各看各的：回退成明文后 Cookie 若仍带 Secure，浏览器
+// 在 HTTP 下不会回传该 Cookie，登录态立刻失效，运维入口被锁死，
+// 恰好是这个兜底本来要防的事。
+func resolveAdminTLS(dataFile string) (adminTLSConfig, bool) {
+	cfg := loadAdminTLS(dataFile)
+	if !cfg.Enabled {
+		return cfg, false
+	}
+	if err := cfg.validPair(); err != nil {
+		log.Printf("管理界面 HTTPS 证书不可用，回退为 HTTP：%v", err)
+		cfg.Enabled = false
+		return cfg, false
+	}
+	return cfg, true
+}
+
+// sessionCookieSecure 计算会话 Cookie 是否带 Secure 标记。
+//
+// forceSecure 来自 -cookie-secure / HSA_COOKIE_SECURE（反向代理终止 TLS 时用），
+// tlsOn 是实际生效的协议。两者都为 false 时绝不能带 Secure。
+func sessionCookieSecure(forceSecure, tlsOn bool) bool {
+	return forceSecure || tlsOn
+}
+
 // restartSelf 延迟重启管理界面进程（systemd 会自动拉起，加载新 HTTPS 配置）。
 // 延迟 1 秒让当前响应先发出；非 systemd 环境直接返回错误由界面提示手动重启。
+//
+// 重启的单元名可用 HSA_SYSTEMD_UNIT 覆盖，默认 headscale-admin。
+// 隔离实例用另一个单元名，才能在不碰生产服务的前提下测这条自重启链路。
 func restartSelf() error {
 	if os.Getenv("INVOCATION_ID") == "" {
 		return errors.New("not running under systemd")
 	}
+	unit := os.Getenv("HSA_SYSTEMD_UNIT")
+	if unit == "" {
+		unit = "headscale-admin"
+	}
 	go func() {
 		time.Sleep(time.Second)
-		_ = exec.Command("systemctl", "restart", "headscale-admin").Run()
+		_ = exec.Command("systemctl", "restart", unit).Run()
 	}()
 	return nil
 }
