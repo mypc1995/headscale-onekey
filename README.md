@@ -83,6 +83,7 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 | `remove-headcontrol.sh` | 从旧版本升级时清理 HeadControl（3000），释放端口 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
 | `test-headscale-admin.sh` | 管理界面编译、登录、双语、主题、网速、配置校验与 CSRF 验证 |
+| `test-headscale-admin-tls.sh` | 管理界面 HTTPS 全流程验证（隔离实例，不碰生产服务） |
 
 ## 快速开始
 
@@ -225,8 +226,8 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 - 开关 + 证书来源二选一：粘贴 PEM（校验配对后写入数据目录 `certs/admin.crt` / `admin.key`，权限 0600），或复用 headscale 手动模式下的证书文件路径。
 - 启用后管理界面**只监听 HTTPS**，HTTP 端口不再响应；Cookie 的 `Secure` 标记随 HTTPS 自动开启。
-- 证书不可用时记日志并回退 HTTP，避免一次错误配置把运维入口锁死。
-- 保存后需要重启管理界面生效（Go 的 `http.Server` 无法在同一端口原地切换 TLS）。systemd 环境下自动重启，非 systemd 环境提示手动重启。
+- 证书不可用时记日志并回退 HTTP，避免一次错误配置把运维入口锁死。**回退时 Cookie 的 `Secure` 标记同步关闭**——明文下浏览器不会回传带 `Secure` 的 Cookie，若标记仍在，登录态会立刻失效，恰好把这个安全阀变成锁死入口。
+- 保存后需要重启管理界面生效（Go 的 `http.Server` 无法在同一端口原地切换 TLS）。systemd 环境下自动重启，非 systemd 环境提示手动重启。连续保存不会触发 systemd 的启动限流（部署时已用 `StartLimitIntervalSec=0` 关闭），不会把服务重启到起不来的状态。
 - 配置存放在数据目录的 `admin-tls.json`（权限 0600）。若因证书问题无法访问网页，删除该文件并重启服务即可恢复 HTTP。
 
 **保存与应用流程**
@@ -361,6 +362,15 @@ bash test-headscale-admin.sh    # 管理界面编译、登录、双语、主题�
 (cd headscale-admin && go test ./...)
                                 # 配置解析、管理界面 HTTPS 证书、节点映射、双语展示、
                                 # 告警规则与账号权限单元测试
+```
+
+管理界面 HTTPS 的端到端验证需要一台可写 `/etc/systemd/system` 的 Linux 机器（要起独立的 systemd 单元），**不会碰生产服务**：
+
+```bash
+bash test-headscale-admin-tls.sh /usr/local/bin/headscale-admin
+                                # 隔离实例（独立端口 + 独立单元）跑启用 → 证书失效回退
+                                # → 证书恢复 → 关闭 → 复用 headscale 手动证书全流程，
+                                # 每段都断言 Cookie 的 Secure 标记与登录态可用性
 ```
 
 ## 安全提示

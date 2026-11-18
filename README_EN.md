@@ -83,6 +83,7 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. admin UI
 | `remove-headcontrol.sh` | Cleans up HeadControl (port 3000) when upgrading from older versions |
 | `test-headscale-cli.sh` | Read-only sandbox checks for the Headscale CLI and config keys |
 | `test-headscale-admin.sh` | Admin UI checks: build, login, i18n, themes, bandwidth, config validation and CSRF |
+| `test-headscale-admin-tls.sh` | End-to-end admin UI HTTPS checks on an isolated instance (never touches production) |
 
 ## Quick start
 
@@ -225,8 +226,8 @@ A separate card at the bottom of the settings page controls whether **the admin 
 
 - A toggle plus a certificate source: paste PEM (certificate and private key as text; verified as a pair, then written to `certs/admin.crt` and `admin.key` in the data directory, mode 0600), or reuse the certificate paths from headscale's manual mode.
 - Once enabled, the admin UI **listens on HTTPS only** and the HTTP port stops responding; the session cookie's `Secure` flag is turned on automatically.
-- If the certificate cannot be loaded, the failure is logged and the UI falls back to HTTP, so one bad configuration cannot lock you out of the ops console.
-- Saving requires a restart of the admin UI to take effect (Go's `http.Server` cannot switch to TLS in place on the same port). Under systemd it restarts automatically; otherwise you are prompted to restart manually.
+- If the certificate cannot be loaded, the failure is logged and the UI falls back to HTTP, so one bad configuration cannot lock you out of the ops console. **The session cookie's `Secure` flag is cleared together with that fallback** — browsers do not send a `Secure` cookie over plain HTTP, so a stale flag would kill the login right away and turn the safety valve into a lockout.
+- Saving requires a restart of the admin UI to take effect (Go's `http.Server` cannot switch to TLS in place on the same port). Under systemd it restarts automatically; otherwise you are prompted to restart manually. Repeated saves cannot trip systemd's start rate limit (deployment disables it with `StartLimitIntervalSec=0`), so the service never ends up in a state it cannot restart out of.
 - The configuration lives in `admin-tls.json` in the data directory (mode 0600). If the page becomes unreachable because of a certificate problem, delete that file and restart the service to return to HTTP.
 
 **Save and apply flow**
@@ -362,6 +363,16 @@ bash test-headscale-admin.sh    # Admin UI build, login, i18n, themes, bandwidth
 (cd headscale-admin && go test ./...)
                                 # Unit tests for config parsing, admin UI TLS certificates, node
                                 # mapping, i18n rendering, alert rules, and account permissions
+```
+
+The end-to-end admin-UI HTTPS check needs a Linux machine that can write `/etc/systemd/system` (it starts its own systemd unit) and **never touches the production service**:
+
+```bash
+bash test-headscale-admin-tls.sh /usr/local/bin/headscale-admin
+                                # Isolated instance (own port + own unit) walks enable →
+                                # certificate failure fallback → certificate recovery → disable
+                                # → reuse of headscale's manual certificate, asserting the
+                                # cookie's Secure flag and session usability at every step
 ```
 
 ## Security notes
