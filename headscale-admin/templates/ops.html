@@ -73,6 +73,20 @@
     </table>
   </div>
   <div class="empty" id="node-empty" {{if .Data.Nodes.Nodes}}hidden{{end}}>{{icon "server" 18}} {{t .Lang "nodeMon.empty"}}</div>
+  <div class="join-cmd-row" id="speed-report">
+    <span class="muted small">{{t .Lang "nodeMon.speedEndpoint"}}</span>
+    <code class="mono join-cmd" id="speed-endpoint">{{.Data.SpeedEndpoint}}</code>
+    <span class="badge {{if .Data.Nodes.SpeedEnabled}}success{{else}}muted{{end}}" id="speed-channel-state">{{if .Data.Nodes.SpeedEnabled}}{{t .Lang "nodeMon.speedEnabled"}}{{else}}{{t .Lang "nodeMon.speedDisabled"}}{{end}}</span>
+    {{if eq .Data.Nodes.SpeedChannel "api"}}<span class="badge info" id="speed-channel-kind">{{t .Lang "nodeMon.speedChannelApi"}}</span>{{else if eq .Data.Nodes.SpeedChannel "file"}}<span class="badge info" id="speed-channel-kind">{{t .Lang "nodeMon.speedChannelFile"}}</span>{{end}}
+  </div>
+  {{if .Data.SpeedToken}}
+  <div class="join-cmd-row">
+    <span class="muted small">{{t .Lang "nodeMon.speedToken"}}</span>
+    <code class="mono join-cmd" id="speed-token">{{.Data.SpeedToken}}</code>
+    <button type="button" class="btn btn-sm btn-primary" id="speed-token-copy">{{icon "copy" 14}} <span id="speed-token-copy-label">{{t .Lang "join.copyKey"}}</span></button>
+  </div>
+  {{end}}
+  <p class="hint">{{t .Lang "nodeMon.speedHint"}}</p>
   <div class="net-legend node-legend">
     <span class="muted">{{t .Lang "nodeMon.speedNote"}}</span>
     <span class="muted" id="node-updated" data-tpl="{{t .Lang "nodeMon.updated" "__T__"}}">{{t .Lang "nodeMon.updated" .Data.Nodes.Updated}}</span>

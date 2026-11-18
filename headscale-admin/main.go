@@ -30,6 +30,7 @@ type App struct {
 	dataFile   string
 	tplDir     string
 	staticDir  string
+	speed      *speedReporter
 }
 
 type Page struct {
@@ -55,6 +56,8 @@ func main() {
 	adminUser := flag.String("admin-user", "admin", "初始管理员用户名")
 	adminPass := flag.String("admin-pass", "", "初始管理员密码（配合 -init-only 使用）")
 	secureCookie := flag.Bool("cookie-secure", os.Getenv("HSA_COOKIE_SECURE") == "1", "Cookie 增加 Secure 标记")
+	speedToken := flag.String("node-speed-token", envDefault("HSA_NODE_SPEED_TOKEN", ""), "节点网速上报令牌（节点侧 agent 调用 POST /api/speed 使用）")
+	speedTokenFile := flag.String("node-speed-token-file", envDefault("HSA_NODE_SPEED_TOKEN_FILE", ""), "节点网速上报令牌文件（优先于令牌本身，避免令牌出现在进程参数里）")
 	initOnly := flag.Bool("init-only", false, "初始化管理员后立即退出")
 	flag.Parse()
 
@@ -144,10 +147,16 @@ func main() {
 	}
 
 	hs := NewHSClient()
+	// 节点网速上报通道。没有令牌时整个接口关闭（返回 404），不暴露匿名写入入口。
+	reporter := newSpeedReporter(loadSpeedToken(*speedToken, *speedTokenFile))
+	if reporter.enabled() {
+		log.Printf("节点网速上报通道已启用（POST /api/speed）")
+	}
 	a := &App{
 		store: store, sessions: NewSessionManager(store.DB, secure), hs: hs, net: NewNetMonitor(),
-		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
+		host: NewHostMonitor(), nodes: NewNodeMonitor(hs, reporter.data), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir, dataFile: *dbFile,
+		speed: reporter,
 	}
 
 	mux := http.NewServeMux()
@@ -156,6 +165,8 @@ func main() {
 	mux.HandleFunc("GET /lang", a.setLanguage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(*staticDir))))
 	mux.Handle("GET /health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
+	// 节点侧上报入口：走独立令牌认证，不经过管理员会话，因此挂在外层 mux 上。
+	mux.HandleFunc("POST /api/speed", reporter.handle)
 
 	p := http.NewServeMux()
 	p.HandleFunc("GET /", a.dashboard)

@@ -355,7 +355,7 @@ func validFQDN(s string) bool {
 
 var hostLabelRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 
-// validBaseDomain 比 FQDN 宽松：headscale 允许以数字段结尾的根域（如 hs.192.168.100.60）。
+// validBaseDomain 比 FQDN 宽松：headscale 允许以数字段结尾的根域（如 hs.192.0.2.60）。
 func validBaseDomain(s string) bool {
 	if s == "" || len(s) > 253 || strings.HasSuffix(s, ".") || strings.HasPrefix(s, ".") {
 		return false

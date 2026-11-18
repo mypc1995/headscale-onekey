@@ -130,6 +130,19 @@ if [[ "$PRESERVE_ADMIN" != "yes" ]]; then
 fi
 
 step "创建 systemd 服务（端口 ${PORT}）"
+# 节点网速上报令牌：节点侧 agent 用它调用 POST /api/speed 上报累计流量计数器。
+# 令牌放在独立文件里而不是 systemd unit 的 Environment=，避免同机用户从
+# systemctl show / ps 里直接读到。已存在则沿用，保证升级不会让节点掉线。
+SPEED_TOKEN_FILE="${DATA_DIR}/node-speed-token"
+if [[ ! -s "$SPEED_TOKEN_FILE" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32 >"$SPEED_TOKEN_FILE"
+  else
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$SPEED_TOKEN_FILE"
+  fi
+  chmod 600 "$SPEED_TOKEN_FILE"
+fi
+SPEED_TOKEN="$(tr -d ' \t\n\r' <"$SPEED_TOKEN_FILE")"
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=Headscale Admin Console
@@ -145,6 +158,7 @@ Environment=HSA_DATA_FILE=${DB_FILE}
 Environment=HSA_LEGACY_JSON=${LEGACY_JSON}
 Environment=HSA_TEMPLATES=${INSTALL_DIR}/templates
 Environment=HSA_STATIC=${INSTALL_DIR}/static
+Environment=HSA_NODE_SPEED_TOKEN_FILE=${SPEED_TOKEN_FILE}
 ExecStart=${BIN}
 Restart=on-failure
 RestartSec=3
@@ -209,5 +223,19 @@ cat <<EOF
   - 支持：总览、节点、用户、密钥与接入、网络与策略、运维监控、管理员
   - 修改配置/ACL 会自动备份原文件并做 configtest 校验
   - 停止服务：systemctl stop headscale-admin
+============================================================
+EOF
+cat <<EOF
+节点网速上报（可选，让运维页显示每个节点的实时速度）：
+  上报接口   : POST http://<服务器tailnet地址>:${PORT}/api/speed
+  上报令牌   : ${SPEED_TOKEN}
+  令牌文件   : ${SPEED_TOKEN_FILE}（0600，升级部署会沿用）
+  节点侧脚本 : 仓库里的 node-speed-agent.sh
+  用法       : 在节点上执行
+               HSA_URL=http://<服务器tailnet地址>:${PORT}/api/speed \\
+               HSA_TOKEN=${SPEED_TOKEN} \\
+               bash node-speed-agent.sh
+  说明       : 节点连报两次后，运维页「节点监控」的速度列开始显示；
+               未部署采集代理时该列显示 —，不影响其它功能。
 ============================================================
 EOF

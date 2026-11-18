@@ -64,9 +64,13 @@ type NodeSnapshot struct {
 	Nodes     []NodeStat `json:"nodes"`
 	History   []int      `json:"history"` // 每次采集的在线节点数
 	Updated   string     `json:"updated"`
-	// SpeedSource 表示网速数据源（计数器文件）这次是否成功读取。
+	// SpeedSource 表示网速数据源这次是否可用。
 	// false 时各节点网速显示占位，并提示如何接入采集代理。
 	SpeedSource bool `json:"speed_source"`
+	// SpeedChannel 标明当前生效的数据来源：api（节点侧上报）或 file（计数器文件）。
+	SpeedChannel string `json:"speed_channel,omitempty"`
+	// SpeedEnabled 表示节点侧上报通道（POST /api/speed）是否已启用。
+	SpeedEnabled bool `json:"speed_enabled"`
 }
 
 // NodeMonitor 周期性执行 headscale CLI，把节点状态缓存起来，
@@ -82,6 +86,8 @@ type NodeMonitor struct {
 	speedFile   string
 	prevSpeed   map[string]speedCounter
 	prevSpeedAt time.Time
+	// reported 是节点侧 HTTP 上报通道的数据源；为空表示该通道未启用。
+	reported *speedReport
 }
 
 // speedCounter 是某个节点一次采样读到的累计收/发字节数。
@@ -95,11 +101,12 @@ const (
 	nodeSamplePeriod = 15 * time.Second
 )
 
-func NewNodeMonitor(hs *HSClient) *NodeMonitor {
+func NewNodeMonitor(hs *HSClient, reported *speedReport) *NodeMonitor {
 	m := &NodeMonitor{
 		hs:        hs,
 		speedFile: os.Getenv("HSA_NODE_SPEED_FILE"),
 		prevSpeed: map[string]speedCounter{},
+		reported:  reported,
 	}
 	m.sample()
 	go func() {
@@ -138,6 +145,10 @@ func (m *NodeMonitor) sample() {
 		snap.Nodes = append([]NodeStat{}, prev.Nodes...)
 		snap.Total, snap.Online, snap.Offline, snap.Expired = prev.Total, prev.Online, prev.Offline, prev.Expired
 		snap.SpeedSource = prev.SpeedSource
+		// 通道状态与 CLI 无关：CLI 读取失败时也要保留，不能被一起抹掉，
+		// 否则运维会误以为上报通道没开。
+		snap.SpeedChannel = prev.SpeedChannel
+		snap.SpeedEnabled = m.reported.isEnabled()
 		snap.History = append([]int{}, m.history...)
 		m.snap = snap
 		m.mu.Unlock()
@@ -157,7 +168,7 @@ func (m *NodeMonitor) sample() {
 	}
 	snap.Offline = snap.Total - snap.Online
 
-	rates, speedOK := m.nodeSpeedRates(snap.Nodes, now)
+	rates, channel, speedOK := m.nodeSpeedRates(snap.Nodes, now)
 	for i := range snap.Nodes {
 		key := strconv.FormatUint(snap.Nodes[i].ID, 10)
 		if r, ok := rates[key]; ok {
@@ -167,6 +178,8 @@ func (m *NodeMonitor) sample() {
 		}
 	}
 	snap.SpeedSource = speedOK
+	snap.SpeedChannel = channel
+	snap.SpeedEnabled = m.reported.isEnabled()
 
 	m.mu.Lock()
 	m.history = append(m.history, snap.Online)
@@ -220,10 +233,43 @@ func parseSpeedFile(content []byte) map[string]speedCounter {
 	return out
 }
 
-// nodeSpeedRates 读取计数器文件并按两次采样的差值换算每个节点的速率。
-// 返回的第二个值表示数据源这次是否可用（文件存在且能解析）；
-// 首轮采样或计数器清零（节点/agent 重启）时速率按 0 处理。
-func (m *NodeMonitor) nodeSpeedRates(nodes []NodeStat, now time.Time) (map[string]speedRate, bool) {
+// nodeSpeedRates 汇总各节点的速率，数据来源有两个，节点侧上报优先：
+//   - HTTP 上报：速率在上报到达时就按两次上报的差值算好了，这里直接取用；
+//   - 计数器文件：按管理界面自身的采样节奏（每 15 秒）做差值换算。
+//
+// 返回值依次是「按节点 ID 归档的速率」「当前生效的数据来源」「数据源是否可用」。
+func (m *NodeMonitor) nodeSpeedRates(nodes []NodeStat, now time.Time) (map[string]speedRate, string, bool) {
+	apiRates := map[string]speedRate{}
+	if m.reported != nil {
+		apiRates = m.reported.rates(now)
+	}
+	fileRates, _ := m.fileSpeedRates(nodes, now)
+
+	out := map[string]speedRate{}
+	channel := ""
+	for _, n := range nodes {
+		idKey := strconv.FormatUint(n.ID, 10)
+		if r, ok := lookupRate(apiRates, n); ok {
+			out[idKey] = r
+			channel = "api"
+			continue
+		}
+		if r, ok := fileRates[idKey]; ok {
+			out[idKey] = r
+			if channel == "" {
+				channel = "file"
+			}
+		}
+	}
+	if len(out) == 0 {
+		return out, "", false
+	}
+	return out, channel, true
+}
+
+// fileSpeedRates 从计数器文件按两次采样的差值换算每个节点的速率，
+// 结果按节点 ID 归档。文件不存在或内容无法解析时返回不可用。
+func (m *NodeMonitor) fileSpeedRates(nodes []NodeStat, now time.Time) (map[string]speedRate, bool) {
 	rates := map[string]speedRate{}
 	if m.speedFile == "" {
 		return rates, false
@@ -266,6 +312,26 @@ func (m *NodeMonitor) nodeSpeedRates(nodes []NodeStat, now time.Time) (map[strin
 		}
 	}
 	return rates, true
+}
+
+// lookupRate 按节点 ID、节点名、tailnet IP 依次查找该节点的速率。
+// 节点侧 agent 只知道自己的主机名或 tailnet IP，ID 只有服务端清楚，
+// 所以三种标识都认。
+func lookupRate(rates map[string]speedRate, n NodeStat) (speedRate, bool) {
+	if r, ok := rates[strconv.FormatUint(n.ID, 10)]; ok {
+		return r, true
+	}
+	if n.Name != "" {
+		if r, ok := rates[n.Name]; ok {
+			return r, true
+		}
+	}
+	for _, ip := range n.IPs {
+		if r, ok := rates[ip]; ok {
+			return r, true
+		}
+	}
+	return speedRate{}, false
 }
 
 // newNodesView 复制一份快照并填充本地化文案，避免修改缓存中的原始数据。

@@ -265,14 +265,14 @@ func TestNodeSpeedRates(t *testing.T) {
 	m := &NodeMonitor{speedFile: file, prevSpeed: map[string]speedCounter{}}
 
 	// 数据源不存在：整体不可用，节点显示占位。
-	if _, ok := m.nodeSpeedRates(nodes, time.Now()); ok {
+	if _, _, ok := m.nodeSpeedRates(nodes, time.Now()); ok {
 		t.Fatal("missing file should mark source unavailable")
 	}
 
 	// 首轮采样只有计数器，速率为 0 但数据可用。
 	t0 := time.Now()
 	writeSpeedFile(t, file, `{"12": {"rx_bytes": 1000, "tx_bytes": 500}}`)
-	rates, ok := m.nodeSpeedRates(nodes, t0)
+	rates, _, ok := m.nodeSpeedRates(nodes, t0)
 	if !ok {
 		t.Fatal("first sample should be available")
 	}
@@ -285,7 +285,7 @@ func TestNodeSpeedRates(t *testing.T) {
 
 	// 15 秒后增量 1500/300 字节 → 约 0.098 KB/s 下行、0.02 KB/s 上行。
 	writeSpeedFile(t, file, `{"12": {"rx_bytes": 2500, "tx_bytes": 800}}`)
-	rates, ok = m.nodeSpeedRates(nodes, t0.Add(15*time.Second))
+	rates, _, ok = m.nodeSpeedRates(nodes, t0.Add(15*time.Second))
 	if !ok {
 		t.Fatal("second sample should be available")
 	}
@@ -296,7 +296,7 @@ func TestNodeSpeedRates(t *testing.T) {
 
 	// 计数器回退（节点或 agent 重启）按 0 处理，不产生负速率。
 	writeSpeedFile(t, file, `{"12": {"rx_bytes": 10, "tx_bytes": 5}}`)
-	rates, _ = m.nodeSpeedRates(nodes, t0.Add(30*time.Second))
+	rates, _, _ = m.nodeSpeedRates(nodes, t0.Add(30*time.Second))
 	if r := rates["12"]; r.rx != 0 || r.tx != 0 {
 		t.Fatalf("counter reset rate = %+v, want 0", r)
 	}
@@ -306,7 +306,7 @@ func TestNodeSpeedRates(t *testing.T) {
 	m2 := &NodeMonitor{speedFile: file, prevSpeed: map[string]speedCounter{}}
 	m2.nodeSpeedRates(nodes, t0)
 	writeSpeedFile(t, file, `{"laptop": {"rx_bytes": 250, "tx_bytes": 100}}`)
-	rates, _ = m2.nodeSpeedRates(nodes, t0.Add(15*time.Second))
+	rates, _, _ = m2.nodeSpeedRates(nodes, t0.Add(15*time.Second))
 	want := 150.0 / 15 / 1024
 	if r := rates["12"]; r.rx < want*0.99 || r.rx > want*1.01 {
 		t.Fatalf("name-matched rate = %+v, want ~%v KB/s", r, want)

@@ -62,6 +62,10 @@ type opsData struct {
 	Logs       string
 	ConfigPath string
 	PolicyPath string
+	// SpeedEndpoint 是节点侧上报接口的完整地址。
+	SpeedEndpoint string
+	// SpeedToken 是上报令牌，只对 admin 角色下发（readonly 看不到）。
+	SpeedToken string
 }
 
 // monitorResponse 是 /api/monitor 的返回结构：一次请求带回本机资源、
@@ -178,7 +182,27 @@ func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
 	if d.Service == "" {
 		d.Service = tr(lang, "state.unknown")
 	}
+	d.SpeedEndpoint = a.speedEndpoint(r)
+	// 上报令牌只下发给 admin 角色，readonly 账号看不到。
+	if s := sessionFrom(r); s != nil && s.Role == "admin" && a.speed != nil {
+		d.SpeedToken = a.speed.tokenValue()
+	}
 	a.render(w, r, "ops", d)
+}
+
+// speedEndpoint 返回节点侧上报接口的完整地址，供管理员分发给节点 agent。
+// 主机名取自当前请求的 Host；节点在 tailnet 内访问时，管理员应把地址里的
+// 主机名换成服务器的 tailnet IP，否则节点解析不到。
+func (a *App) speedEndpoint(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil || loadAdminTLS(a.dataFile).Enabled {
+		scheme = "https"
+	}
+	host := r.Host
+	if host == "" {
+		host = "127.0.0.1:" + a.port
+	}
+	return scheme + "://" + host + "/api/speed"
 }
 
 func (a *App) adminsPage(w http.ResponseWriter, r *http.Request) {

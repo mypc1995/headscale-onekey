@@ -28,6 +28,7 @@ Targets Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora, on x86_64 
 | `remove-headcontrol.sh` | Cleans up HeadControl (port 3000) when upgrading from older versions |
 | `test-headscale-cli.sh` | Read-only sandbox checks for Headscale CLI and config keys |
 | `test-headscale-admin.sh` | Admin UI checks: build, login, i18n, themes, bandwidth, config validation, and CSRF |
+| `node-speed-agent.sh` | Node-side speed collector that reports local Tailscale traffic counters to the admin UI |
 
 ## Quick start
 
@@ -195,7 +196,41 @@ The source lives in `headscale-admin/` and depends on no third-party project wit
 
 **Node monitoring**: runs `headscale nodes list -o json` every 15 seconds in the background, caches the result, and shows total/online/offline/expired node counts plus each node's name, user, virtual IPs, online state, live speed (down/up), last handshake, client version, OS, key expiry, tags, and route counts. States are online, offline, or key-expired, with expiry taking precedence. When the CLI read fails, the last successful snapshot is kept and a banner notes that stale data is being shown. The table footer notes the update time and sampling interval.
 
-**Per-node live speed**: node-to-node traffic flows over WireGuard direct connections or DERP, never through the control server, and neither the headscale CLI nor its Prometheus metrics expose per-node traffic counters. The bandwidth data source is therefore optional: point the `HSA_NODE_SPEED_FILE` environment variable at a counter JSON file that a node-side agent periodically writes cumulative rx/tx byte counts into, and the server derives rates from the delta between two samples (the same idea as CPU tick deltas), displayed automatically as B/s, KB/s, or MB/s. The file is keyed by node ID or node name:
+**Per-node live speed**: node-to-node traffic flows over WireGuard direct connections or DERP, never through the control server, and neither the headscale CLI nor its Prometheus metrics expose per-node traffic counters. The bandwidth data source therefore has to be collected on the nodes and sent back. Two channels are supported, and **node reporting takes priority over the counter file**:
+
+| Channel | Use case | Configuration |
+| --- | --- | --- |
+| HTTP reporting (recommended) | The collector runs on the node | Configure a report token to enable `POST /api/speed` |
+| Counter file | The collector runs next to the admin UI | Environment variable `HSA_NODE_SPEED_FILE` pointing at a JSON file |
+
+**HTTP reporting channel**: `deploy-headscale-admin.sh` generates a report token on deployment and stores it in `/var/lib/headscale-admin/node-speed-token` (mode 0600, reused on upgrade). The token can also be supplied directly through `HSA_NODE_SPEED_TOKEN`. **Without a token the whole endpoint is disabled and returns 404**, so it never becomes an anonymous write endpoint. The operations page shows the endpoint, the token, and the channel state, so an administrator can copy the token and hand it out.
+
+```bash
+# Single report: node may be the node ID, the node name, or a tailnet IP — all three match
+curl -X POST http://<server-tailnet-address>:3001/api/speed \
+  -H "X-Node-Speed-Token: <report token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"node":"100.64.0.5","rx_bytes":154600,"tx_bytes":31220}'
+
+# Arrays are accepted too; the token may also go in the body "token" field or an Authorization: Bearer header
+curl -X POST http://<server-tailnet-address>:3001/api/speed \
+  -H "Authorization: Bearer <report token>" \
+  -d '[{"node":"100.64.0.5","rx_bytes":154600,"tx_bytes":31220}]'
+```
+
+`rx_bytes` / `tx_bytes` are **cumulative** byte counts; the server derives the rate from the delta between two reports (the same idea as CPU tick deltas) and displays it as B/s, KB/s, or MB/s. The speed column starts filling in once the node has reported twice.
+
+**Node-side collector**: `node-speed-agent.sh` in this repository is a ready-to-use reference implementation. It finds the `tailscale*` interface, reads the cumulative counters from `/proc/net/dev`, and reports them on an interval:
+
+```bash
+HSA_URL=http://<server-tailnet-address>:3001/api/speed \
+HSA_TOKEN=<report token> \
+bash node-speed-agent.sh
+```
+
+Optional environment variables: `HSA_IFACE` (interface to collect), `HSA_INTERVAL` (report interval in seconds, default 10, keep it at 15 or below), `HSA_NODE` (node identifier, defaults to the local tailnet IP), `HSA_ONCE=1` (report once and exit, useful for self-checks).
+
+**Counter file channel**: the `HSA_NODE_SPEED_FILE` environment variable points at a JSON file that a local collector writes cumulative rx/tx byte counts into; the server derives rates from the delta between two samples. The file is keyed by node ID or node name:
 
 ```json
 {
@@ -204,7 +239,7 @@ The source lives in `headscale-admin/` and depends on no third-party project wit
 }
 ```
 
-When the variable is unset, the file is missing, or its content cannot be parsed, every node's speed column shows a `—` placeholder with a hover explanation, and all other monitoring data is unaffected. Counter resets (node or agent restarts) are treated as zero for that interval, never negative. Rates use the same KB/s-based units as the live bandwidth panel.
+When no channel is connected, every node's speed column shows a `—` placeholder with a hover explanation, and all other monitoring data is unaffected. Counter resets (node or agent restarts) are treated as zero for that interval, never negative. Rates use the same KB/s-based units as the live bandwidth panel.
 
 Only control-plane metrics are available for nodes. Tailscale clients do not report host resources such as CPU and memory to headscale, so per-node CPU/memory is out of scope for this page; if you need it, deploy a collection agent on the nodes, push the data to a new endpoint, and wire it in using the extension points below.
 

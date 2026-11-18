@@ -47,7 +47,7 @@ cat >"$TMPDIR/fake-hs" <<'EOF'
 case "$*" in
   *"list-routes"*) echo '[]' ;;
   *"users list"*) echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
-  *"nodes list"*) echo 'null' ;;
+  *"nodes list"*) [ -s "$FAKE_NODES" ] && cat "$FAKE_NODES" || echo 'null' ;;
   *"preauthkeys list"*) [ -s "$FAKE_STATE" ] && cat "$FAKE_STATE" || echo '[]' ;;
   *"preauthkeys create"*)
     echo '[{"id":5,"user":{"name":"default"},"key":"hskey-test-ab12-***","reusable":true,"expiration":{"seconds":1894975942,"nanos":0},"created_at":{"seconds":1794889542,"nanos":0}}]' > "$FAKE_STATE"
@@ -88,8 +88,9 @@ policy:
 YAML
 
 PORT=$((39000 + RANDOM % 1000))
-HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" "$TMPDIR/hsa" \
+HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
+  -node-speed-token test-speed-token \
   >"$TMPDIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 40); do
@@ -347,6 +348,51 @@ CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/users.html" | head -1 | sed
 [[ ${#CSRF} -ge 32 ]] && ok "CSRF token 已下发" || fail "未找到 CSRF token"
 [[ "$(curl -s -b "$JAR" -X POST "$BASE/users/create" -d 'name=x' -o /dev/null -w '%{http_code}')" == "400" ]] && ok "缺少 CSRF 的请求被拒绝" || fail "缺少 CSRF 未被拒绝"
 [[ "$(curl -s -b "$JAR" -X POST "$BASE/users/create" -d "csrf=${CSRF}&name=u1" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "携带 CSRF 的请求通过" || fail "CSRF 校验异常"
+
+info "验证节点网速上报通道"
+SPEED_TOKEN="test-speed-token"
+# 探针用的节点标识不能与后面假节点的 ID/名称/IP 撞上，
+# 否则 lookupRate 会优先匹配到它、把真实速率顶掉。
+sp_code() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/speed" -H 'Content-Type: application/json' "$@"; }
+[[ "$(sp_code -d '{"node":"auth-probe","rx_bytes":1,"tx_bytes":2}')" == "401" ]] && ok "缺少令牌的上报被拒绝" || fail "缺少令牌的上报未被拒绝"
+[[ "$(sp_code -H 'X-Node-Speed-Token: wrong-token' -d '{"node":"auth-probe","rx_bytes":1,"tx_bytes":2}')" == "401" ]] && ok "错误令牌的上报被拒绝" || fail "错误令牌的上报未被拒绝"
+[[ "$(sp_code -H "X-Node-Speed-Token: $SPEED_TOKEN" -d 'not json')" == "400" ]] && ok "非法请求体被拒绝" || fail "非法请求体未被拒绝"
+[[ "$(sp_code -H "X-Node-Speed-Token: $SPEED_TOKEN" -d '{"rx_bytes":1,"tx_bytes":2}')" == "400" ]] && ok "缺少节点标识的上报被拒绝" || fail "缺少节点标识的上报未被拒绝"
+[[ "$(sp_code -H "X-Node-Speed-Token: $SPEED_TOKEN" -d '{"node":"auth-probe","rx_bytes":1,"tx_bytes":2}')" == "200" ]] && ok "正确令牌的上报被接受" || fail "正确令牌的上报未被接受"
+# 通道状态与 headscale CLI 无关，任何平台都要能读出来。
+curl -s -b "$JAR" "$BASE/api/monitor" -o "$TMPDIR/monitor-ch.json"
+grep -q '"speed_enabled":true' "$TMPDIR/monitor-ch.json" && ok "上报通道状态已下发" || fail "上报通道状态缺失"
+
+curl -s -b "$JAR" "$BASE/ops" -o "$TMPDIR/ops-speed.html"
+grep -q 'id="speed-endpoint"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报接口地址" || fail "缺少上报接口地址"
+grep -q 'id="speed-token"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报令牌" || fail "缺少上报令牌"
+grep -q 'id="speed-channel-state"' "$TMPDIR/ops-speed.html" && ok "运维页展示上报通道状态" || fail "缺少上报通道状态"
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+  info "验证上报后节点速度真正显示出来"
+  # 造一个节点出来，上报的数据才能挂到具体节点上。
+  cat >"$TMPDIR/nodes.json" <<'JSON'
+[{"id":12,"name":"laptop","user":{"name":"default"},"ip_addresses":["100.64.0.5"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"expiration":{"seconds":1894975942,"nanos":0},"register_method":"1","client_version":"1.60.0","host_info":{"os":"linux"},"tags":[],"approved_routes":[],"available_routes":[]}]
+JSON
+  # 连报两次：第一次建立基准，第二次才有速率差值。
+  sp_code -H "X-Node-Speed-Token: $SPEED_TOKEN" -d '{"node":"100.64.0.5","rx_bytes":1000,"tx_bytes":500}' >/dev/null
+  sleep 2
+  sp_code -H "X-Node-Speed-Token: $SPEED_TOKEN" -d '{"node":"100.64.0.5","rx_bytes":61440,"tx_bytes":30720}' >/dev/null
+  # 轮询直到速率真正被换算出来。注意不能一见 speed_source=true 就收工：
+  # 采样点可能正好落在两次上报之间，那时数据源已可用但速率仍是 0。
+  found=0
+  for _ in $(seq 1 60); do
+    curl -s -b "$JAR" "$BASE/api/monitor" -o "$TMPDIR/monitor-speed.json"
+    rx="$(grep -o '"rx_rate":[0-9.]*' "$TMPDIR/monitor-speed.json" | head -1 | cut -d: -f2)"
+    if [[ -n "$rx" ]] && awk -v v="$rx" 'BEGIN{exit !(v>5 && v<200)}'; then found=1; break; fi
+    sleep 0.5
+  done
+  [[ "$found" == "1" ]] && ok "上报后节点速率已换算为非零值（${rx:-0} KB/s）" || fail "上报后节点速率未换算"
+  grep -q '"speed_source":true' "$TMPDIR/monitor-speed.json" && ok "上报后网速数据源变为可用" || fail "上报后网速数据源仍不可用"
+  grep -q '"speed_channel":"api"' "$TMPDIR/monitor-speed.json" && ok "数据来源标记为节点上报" || fail "数据来源标记异常"
+else
+  info "非 Linux 环境无法执行 fake headscale，节点速度展示断言由远程测试覆盖"
+fi
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true

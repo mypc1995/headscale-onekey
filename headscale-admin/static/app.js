@@ -598,3 +598,45 @@
     body.hidden = !toggle.checked;
   });
 })();
+
+// 运维页：复制节点网速上报令牌。
+(function () {
+  var btn = document.getElementById('speed-token-copy');
+  var tokenEl = document.getElementById('speed-token');
+  var labelEl = document.getElementById('speed-token-copy-label');
+  if (!btn || !tokenEl) return;
+
+  function copyText(text, done) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      done();
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  btn.addEventListener('click', function () {
+    var text = (tokenEl.textContent || '').trim();
+    if (!text) return;
+    copyText(text, function () {
+      if (!labelEl) return;
+      var original = labelEl.textContent;
+      labelEl.textContent = '✓';
+      btn.classList.add('copied');
+      setTimeout(function () {
+        labelEl.textContent = original;
+        btn.classList.remove('copied');
+      }, 1600);
+    });
+  });
+})();

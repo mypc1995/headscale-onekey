@@ -10,7 +10,7 @@ func TestJoinCommand(t *testing.T) {
 		url, key, want string
 	}{
 		{"https://hs.example.com", "k123", "tailscale up --login-server=https://hs.example.com --authkey=k123"},
-		{"http://192.168.100.60:18080", "abc", "tailscale up --login-server=http://192.168.100.60:18080 --authkey=abc"},
+		{"http://192.0.2.10:18080", "abc", "tailscale up --login-server=http://192.0.2.10:18080 --authkey=abc"},
 		{"", "k123", ""},      // 缺地址不拼命令
 		{"https://x", "", ""}, // 缺密钥不拼命令
 		{"", "", ""},

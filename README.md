@@ -28,6 +28,7 @@
 | `remove-headcontrol.sh` | 从旧版本升级时清理 HeadControl（3000），释放端口 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
 | `test-headscale-admin.sh` | 全量管理界面编译、登录、双语、主题、网速、配置校验与 CSRF 验证 |
+| `node-speed-agent.sh` | 节点侧网速采集代理，把本机 Tailscale 流量计数上报到管理界面 |
 
 ## 快速开始
 
@@ -195,7 +196,41 @@ IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿�
 
 **节点监控**：后台每 15 秒执行一次 `headscale nodes list -o json`，缓存结果并展示节点总数、在线、离线、密钥过期数量，以及每个节点的名称、所属用户、虚拟 IP、在线状态、实时速度（下行/上行）、最后握手时间、客户端版本、系统、密钥到期、标签与路由数量。状态分在线、离线、密钥过期三种，密钥过期优先显示。CLI 读取失败时保留上一次成功的数据，并在卡片顶部提示「显示的是上一次成功采集的结果」。表格底部标注数据更新时间与采样周期。
 
-**节点实时速度**：节点间流量走 WireGuard 直连或 DERP，不经过控制服务器，headscale 的 CLI 与 Prometheus 指标都没有按节点的流量计数器，因此网速数据源是可选的——配置环境变量 `HSA_NODE_SPEED_FILE` 指向一个计数器 JSON 文件，由节点侧采集代理定期写入累计收发字节数，服务端按两次采样差值换算速率（与 CPU 利用率的 tick 差值同一思路），单位自动按 B/s、KB/s、MB/s 展示。文件格式按节点 ID 或节点名索引：
+**节点实时速度**：节点间流量走 WireGuard 直连或 DERP，不经过控制服务器，headscale 的 CLI 与 Prometheus 指标都没有按节点的流量计数器，因此网速数据源需要节点侧自己采集再回传。管理界面支持两条通道，**节点上报优先于计数器文件**：
+
+| 通道 | 适用场景 | 配置 |
+| --- | --- | --- |
+| HTTP 上报（推荐） | 采集 agent 跑在节点上 | 配置上报令牌后开放 `POST /api/speed` |
+| 计数器文件 | 采集 agent 与管理界面同机 | 环境变量 `HSA_NODE_SPEED_FILE` 指向 JSON 文件 |
+
+**HTTP 上报通道**：部署脚本 `deploy-headscale-admin.sh` 会自动生成上报令牌并写入 `/var/lib/headscale-admin/node-speed-token`（权限 0600，升级部署沿用），令牌也可通过 `HSA_NODE_SPEED_TOKEN` 直接给出。**没有配置令牌时整个接口关闭并返回 404**，不会变成任何人都能写的匿名入口。运维页会显示上报地址、令牌与通道状态，管理员登录后可直接复制令牌分发。
+
+```bash
+# 单条上报：node 可以是节点 ID、节点名或 tailnet IP，三种都能匹配到节点
+curl -X POST http://<服务器tailnet地址>:3001/api/speed \
+  -H "X-Node-Speed-Token: <上报令牌>" \
+  -H 'Content-Type: application/json' \
+  -d '{"node":"100.64.0.5","rx_bytes":154600,"tx_bytes":31220}'
+
+# 也支持数组批量上报；令牌也可放在请求体的 token 字段，或用 Authorization: Bearer
+curl -X POST http://<服务器tailnet地址>:3001/api/speed \
+  -H "Authorization: Bearer <上报令牌>" \
+  -d '[{"node":"100.64.0.5","rx_bytes":154600,"tx_bytes":31220}]'
+```
+
+`rx_bytes` / `tx_bytes` 是**累计**字节数，服务端按两次上报的差值换算速率（与 CPU 利用率的 tick 差值同一思路），单位自动按 B/s、KB/s、MB/s 展示。节点连报两次后速度列开始显示。
+
+**节点侧采集代理**：仓库里的 `node-speed-agent.sh` 是可直接使用的参考实现，自动找 `tailscale*` 网卡读取 `/proc/net/dev` 的累计计数并定时上报：
+
+```bash
+HSA_URL=http://<服务器tailnet地址>:3001/api/speed \
+HSA_TOKEN=<上报令牌> \
+bash node-speed-agent.sh
+```
+
+可选环境变量：`HSA_IFACE`（指定网卡）、`HSA_INTERVAL`（上报间隔秒数，默认 10，建议不超过 15）、`HSA_NODE`（节点标识，默认用本机 tailnet IP）、`HSA_ONCE=1`（只报一次，用于自检）。
+
+**计数器文件通道**：环境变量 `HSA_NODE_SPEED_FILE` 指向一个 JSON 文件，由同机旁路采集器定期写入累计收发字节数，服务端按两次采样差值换算速率。文件格式按节点 ID 或节点名索引：
 
 ```json
 {
@@ -204,7 +239,7 @@ IPv6 默认关闭，开关未勾选时不会写入 `prefixes.v6`（而不是沿�
 }
 ```
 
-未配置该变量、文件不存在或内容无法解析时，每个节点的速度列显示占位「—」，鼠标悬停可见原因说明，其余监控数据不受影响。计数器回退（节点或代理重启）时当轮速率按 0 处理，不会出现负值。速率口径与实时网速面板一致，均为 KB/s 基准。
+未接入任何通道时，每个节点的速度列显示占位「—」，鼠标悬停可见原因说明，其余监控数据不受影响。计数器回退（节点或代理重启）时当轮速率按 0 处理，不会出现负值。速率口径与实时网速面板一致，均为 KB/s 基准。
 
 节点侧能采集到的只有控制面指标。Tailscale 客户端不会把 CPU、内存等主机资源上报给 headscale，因此各节点的 CPU/内存不在这个页面的能力范围内；如果确有需要，应在节点上部署采集 agent，把数据推到新增接口，按下面的扩展方式接入。
 
