@@ -40,16 +40,16 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. admin UI
 
 ## Features
 
-| Area | Capability |
-| --- | --- |
-| **One-command deploy** | Official binary, system user, data directory, systemd unit, firewall rules and `configtest` self-check in one pass |
-| **Three access modes** | `http://` plaintext for internal networks (port derived from the URL) · `https://` + `--tls-mode acme` (built-in ACME, automatic issuance and renewal) · `https://` + `--tls-mode certbot` (external certificates with a timer, service restarted after renewal) |
-| **Zero-dependency console** | Single Go binary, inline icons, pure-Go SQLite driver — no CGO, no external CDN |
-| **Full web configuration** | Domain, ports, prefixes, DNS, DERP, ACL, TLS certificates and renewal are all graphical; backup + `configtest` before every save |
-| **Live monitoring** | Host CPU/memory/load/uptime + per-node state, handshake, version, expiry and routes + 3-second bandwidth charts + 7 alert rules |
-| **Per-node bandwidth** | A node-side agent reports cumulative counters and the server derives rates (the control plane has no such counter) |
-| **Security baseline** | PBKDF2 password digests, HttpOnly sessions, CSRF on every form, login throttling, session revocation on demotion |
-| **i18n & themes** | One-click 中文/English switching, 14 color themes, stored in a cookie / browser local storage |
+| | Area and capability |
+| :---: | --- |
+| 🚀 | **One-command deploy** — official binary, system user, data directory, systemd unit, firewall rules and `configtest` self-check in one pass |
+| 🔐 | **Three access modes** — `http://` plaintext for internal networks (port derived from the URL) · `https://` + `--tls-mode acme` (built-in ACME, automatic renewal) · `https://` + `--tls-mode certbot` (external certificates with a timer, restart after renewal) |
+| 📦 | **Zero-dependency console** — single Go binary, inline icons, pure-Go SQLite driver: no CGO, no external CDN |
+| 🧩 | **Full web configuration** — domain, ports, prefixes, DNS, DERP, ACL, TLS certificates and renewal are all graphical; backup + `configtest` before every save |
+| 📈 | **Live monitoring** — host CPU/memory/load/uptime + per-node state, handshake, version, expiry and routes + 3-second bandwidth charts + 7 alert rules |
+| 🌐 | **Per-node bandwidth** — a node-side agent reports cumulative counters and the server derives rates (the control plane has no such counter) |
+| 🛡️ | **Security baseline** — PBKDF2 password digests, HttpOnly sessions, CSRF on every form, login throttling, session revocation on demotion |
+| 🎨 | **i18n & themes** — one-click 中文/English switching, 14 color themes, stored in a cookie / browser local storage |
 
 <details>
 <summary><b>Table of contents</b></summary>
