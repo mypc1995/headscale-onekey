@@ -72,6 +72,9 @@ grpc_listen_addr: 127.0.0.1:50443
 prefixes:
   v4: 100.64.0.0/10
   v6: fd7a:115c:a1e0::/48
+
+  # Strategy used for allocation of IPs to nodes.
+  allocation: sequential
 acme_url: https://acme-v02.api.letsencrypt.org/directory
 acme_email: ""
 tls_letsencrypt_hostname: ""
@@ -83,6 +86,9 @@ tls_key_path: ""
 dns:
   magic_dns: true
   base_domain: hs.example.com
+  # 故意放一个与 prefixes 块同名的键：块定位一旦越界（正则加了 (?s) 让 . 匹配换行），
+  # 写 v6 会改到这里、删 v6 会连这里一起删掉，而 configtest 完全看不出来。
+  v6: keepme-under-dns
 policy:
   path: ""
 YAML
@@ -264,25 +270,40 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   # 关掉开关：配置里的 prefixes.v6 必须消失，而不是留着旧值继续分配 IPv6。
   curl -s -b "$JAR" -X POST "$BASE/settings/network" \
     -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&prefix_v6=" -o /dev/null
-  grep -q '^  v6:' "$TMPDIR/config.yaml" && fail "关掉开关后 prefixes.v6 仍留在配置文件里（开关无效）" || ok "关掉开关后 prefixes.v6 已从配置文件移除"
+  grep -q 'fd7a:115c:a1e0::/48' "$TMPDIR/config.yaml" && fail "关掉开关后 prefixes.v6 仍留在配置文件里（开关无效）" || ok "关掉开关后 prefixes.v6 已从配置文件移除"
   grep -q '^  v4: 100.64.0.0/10$' "$TMPDIR/config.yaml" && ok "关掉 IPv6 没有损坏 IPv4 网段" || fail "关掉 IPv6 时 IPv4 网段被弄坏"
   # 页面回读：开关勾选状态要跟着配置文件走。
   curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings2.html"
   grep 'id="ipv6_enabled"' "$TMPDIR/settings2.html" | grep -q 'checked' && fail "关掉开关后页面仍显示已勾选" || ok "关掉开关后页面显示未勾选"
-  # 重新打开开关：v6 要写回，而且要追加到块末尾（不能插到 v4 上面）。
+  # 重新打开开关：v6 要写回，而且要落在 prefixes 块内。
   curl -s -b "$JAR" -X POST "$BASE/settings/network" \
     -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&ipv6_enabled=on&prefix_v6=fd7a:115c:a1e0::/48" -o /dev/null
   grep -q '^  v6: fd7a:115c:a1e0::/48$' "$TMPDIR/config.yaml" && ok "重新打开开关后 prefixes.v6 已写回配置" || fail "重新打开开关后 prefixes.v6 没写回"
-  # 键序必须稳定：v4 在 v6 前面。
-  # 注意不能只比对「开关前后两份文件」——两份都由同一段代码写出来，
-  # 顺序错得一样就永远「一致」。这里直接断行号。
+  # 位置断言：v4 和 v6 都必须落在 `prefixes:` 与下一个顶层键之间，且 v4 在 v6 之前。
+  #
+  # 光断言「存在一行 v6」是不够的：块定位正则一旦贪婪吞到文件末尾，
+  # 新键会被追加到**文件末尾**（仍以两个空格开头，照样能 grep 到），
+  # 而 headscale configtest 容忍未知键、照样通过，看着像成功其实没生效。
+  # 也不能只比对「开关前后两份文件」——两份由同一段代码写出，错得一样就永远一致。
+  pfxline="$(grep -n '^prefixes:' "$TMPDIR/config.yaml" | cut -d: -f1)"
+  dnsline="$(grep -n '^dns:' "$TMPDIR/config.yaml" | cut -d: -f1)"
   v4line="$(grep -n '^  v4:' "$TMPDIR/config.yaml" | cut -d: -f1)"
-  v6line="$(grep -n '^  v6:' "$TMPDIR/config.yaml" | cut -d: -f1)"
-  if [[ -n "$v4line" && -n "$v6line" && "$v4line" -lt "$v6line" ]]; then
-    ok "prefixes.v4 仍在 v6 之前（键序稳定）"
+  # 只取 prefixes 块内那一行 v6（dns 块里也有一个同名键，不能混进来）。
+  v6line="$(grep -n '^  v6: fd7a:115c:a1e0::/48$' "$TMPDIR/config.yaml" | cut -d: -f1)"
+  lastline="$(wc -l <"$TMPDIR/config.yaml")"
+  if [[ -n "$pfxline" && -n "$dnsline" && -n "$v4line" && -n "$v6line" \
+        && "$v4line" -gt "$pfxline" && "$v6line" -gt "$v4line" && "$v6line" -lt "$dnsline" ]]; then
+    ok "prefixes.v6 落在 prefixes 块内、且在 v4 之后（行 ${pfxline} < ${v4line} < ${v6line} < ${dnsline}）"
   else
-    fail "键序被打乱：v4 在第 ${v4line:-?} 行，v6 在第 ${v6line:-?} 行"
+    fail "prefixes.v6 位置不对：prefixes=${pfxline:-?} v4=${v4line:-?} v6=${v6line:-?} dns=${dnsline:-?}"
   fi
+  [[ -n "$v6line" && "$v6line" -ne "$lastline" ]] \
+    && ok "prefixes.v6 没有被追加到文件末尾" \
+    || fail "prefixes.v6 落在文件最后一行（块定位跑到文件末尾了）"
+  # 别的块里的同名键必须毫发无伤：块定位越界时，写 v6 会改掉这里、删 v6 会连这里一起删。
+  grep -q '^  v6: keepme-under-dns$' "$TMPDIR/config.yaml" \
+    && ok "dns 块里的同名键未被误改/误删" \
+    || { fail "dns 块里的同名键被误伤（块定位越界）"; grep -n '  v6:' "$TMPDIR/config.yaml" | sed 's/^/      /'; }
   if diff -q "$TMPDIR/config.yaml.snapshot" "$TMPDIR/config.yaml" >/dev/null 2>&1; then
     ok "开关来回切换后配置字节级还原"
   else

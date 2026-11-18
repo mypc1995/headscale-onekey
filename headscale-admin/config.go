@@ -716,8 +716,49 @@ func setTopKey(content, key, value string) string {
 	return key + ": " + value + "\n" + content
 }
 
+// blockPattern 返回定位 YAML 嵌套块的正则。
+//
+// 块的范围 = 块头之后连续的空行与缩进行，直到第一个既非空行、也不缩进的行。
+// 这正是 YAML 里块映射的边界规则：块内的空行和注释不会结束块。
+//
+// 这里绝对不能加 (?s)：那会让 . 匹配换行，.* 一路贪婪吞到文件末尾。后果是
+// 「块内新增键」被追加到**文件末尾**（变成顶层键，根本没写进块里），
+// 「块内删键」也可能误伤文件后面别的块里的同名键。
+func blockPattern(block string) string {
+	return `(?m)(^` + regexp.QuoteMeta(block) + `:[ \t]*\n)((?:(?:[ \t][^\n]*|[ \t]*)(?:\n|\z))*)`
+}
+
+// blockKeyRe 匹配块内位于首层缩进（两格）的键，注释行不算。
+var blockKeyRe = regexp.MustCompile(`^  [^ #\s][^:]*:`)
+
+// insertPosInBlock 返回块内容里插入新键的位置（相对块内容的字节偏移）。
+//
+// 取「块头后第一段连续键行」的最后一行：块内若有空行，后面的注释属于另一段
+// 说明文字，把新键插到那段后面，看起来就像新键属于那段注释。
+// 第一段里一个键都没有时，插到块内容最前面（即紧跟块头）。
+func insertPosInBlock(inner string) int {
+	pos, off := 0, 0
+	rest := inner
+	for len(rest) > 0 {
+		var line string
+		if i := strings.IndexByte(rest, '\n'); i >= 0 {
+			line, rest = rest[:i+1], rest[i+1:]
+		} else {
+			line, rest = rest, ""
+		}
+		if strings.TrimSpace(line) == "" {
+			break // 空行结束第一段，后面的键不再作为插入位置
+		}
+		off += len(line)
+		if blockKeyRe.MatchString(line) {
+			pos = off
+		}
+	}
+	return pos
+}
+
 func setNestedKey(content, block, key, value string) (string, error) {
-	re := regexp.MustCompile(`(?ms)(^` + regexp.QuoteMeta(block) + `:[ \t]*\n)((?:[ \t]+.*\n?)*)`)
+	re := regexp.MustCompile(blockPattern(block))
 	loc := re.FindStringSubmatchIndex(content)
 	if loc == nil {
 		return content, fmt.Errorf("配置中缺少 %s 块", block)
@@ -729,12 +770,15 @@ func setNestedKey(content, block, key, value string) (string, error) {
 		// 同 setTopKey：字面量替换，别让 "$" 被当成模板展开。
 		inner = kr.ReplaceAllLiteralString(inner, line)
 	} else {
-		// 新键追加到块末尾，而不是插到最前面：这样能保持块内原有键的相对顺序，
-		// IPv6 开关来回切换后配置可以字节级还原（否则 prefixes.v6 会被插到 v4 上面）。
-		if inner != "" && !strings.HasSuffix(inner, "\n") {
-			inner += "\n"
+		// 块里还没有这个键：插到块内第一段键行的末尾。
+		// 必须落在块里：插到文件末尾会写出一个顶层键，headscale 根本不认，
+		// 而 configtest 还会因为容忍未知键而放行，看着像成功了其实没生效。
+		at := insertPosInBlock(inner)
+		sep := ""
+		if at > 0 && inner[at-1] != '\n' {
+			sep = "\n" // 块的最后一行没有换行符时，先补一个，别把两行粘一起
 		}
-		inner += line + "\n"
+		inner = inner[:at] + sep + line + "\n" + inner[at:]
 	}
 	return content[:loc[4]] + inner + content[loc[5]:], nil
 }
@@ -744,7 +788,7 @@ func setNestedKey(content, block, key, value string) (string, error) {
 // 「IPv6 开关」要用它：关掉开关时如果只是不写，配置里原来的 prefixes.v6
 // 会原样留着，headscale 仍然按 IPv6 网段分配地址，这个开关等于没开。
 func deleteNestedKey(content, block, key string) string {
-	re := regexp.MustCompile(`(?ms)(^` + regexp.QuoteMeta(block) + `:[ \t]*\n)((?:[ \t]+.*\n?)*)`)
+	re := regexp.MustCompile(blockPattern(block))
 	loc := re.FindStringSubmatchIndex(content)
 	if loc == nil {
 		return content

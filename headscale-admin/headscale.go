@@ -294,29 +294,41 @@ func topValue(content string, key string) string {
 }
 
 func nestedValue(content string, block string, key string) string {
-	re := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(block) + `:\s*\n((?:[ \t]+.*\n?)*)`)
-	m := re.FindStringSubmatch(content)
+	inner, ok := blockBody(content, block)
+	if !ok {
+		return ""
+	}
+	m := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:\s*(.*)$`).FindStringSubmatch(inner)
 	if len(m) < 2 {
 		return ""
 	}
-	inner := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:\s*(.*)$`).FindStringSubmatch(m[1])
-	if len(inner) < 2 {
-		return ""
+	return strings.Trim(strings.TrimSpace(m[1]), `"'`)
+}
+
+// blockBody 取出顶层块（block:）的内容，范围严格限制在该块之内。
+//
+// 不能用 (?ms) 让 "." 匹配换行：那样 `.*` 会贪婪吞到文件末尾，块内查找就会
+// 越界命中后面别的块里的同名键。踩过：删掉 prefixes.v6 之后，读取路径又从
+// 后面的 dns 块里翻出一个同名键，页面开关照样显示已勾选，看着像「删除没生效」。
+func blockBody(content string, block string) (string, bool) {
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(block) + `:[ \t]*\n((?:(?:[ \t][^\n]*|[ \t]*)(?:\n|\z))*)`)
+	m := re.FindStringSubmatch(content)
+	if len(m) < 2 {
+		return "", false
 	}
-	return strings.Trim(strings.TrimSpace(inner[1]), `"'`)
+	return m[1], true
 }
 
 func deepValue(content string, block string, key string) string {
-	re := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(block) + `:\s*\n((?:[ \t]+.*\n?)*)`)
-	m := re.FindStringSubmatch(content)
+	inner, ok := blockBody(content, block)
+	if !ok {
+		return ""
+	}
+	m := regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(key) + `:\s*(.*)$`).FindStringSubmatch(inner)
 	if len(m) < 2 {
 		return ""
 	}
-	inner := regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(key) + `:\s*(.*)$`).FindStringSubmatch(m[1])
-	if len(inner) < 2 {
-		return ""
-	}
-	return strings.Trim(strings.TrimSpace(inner[1]), `"'`)
+	return strings.Trim(strings.TrimSpace(m[1]), `"'`)
 }
 
 func replaceLine(content string, pattern string, replacement string, lang ...string) (string, error) {

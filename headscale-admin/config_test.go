@@ -240,15 +240,51 @@ func TestBuildConfigIPv6Toggle(t *testing.T) {
 	}
 }
 
-// TestSetNestedKeyAppendsAtEnd 验证块内新增的键追加到末尾，且不会粘到上一行。
-func TestSetNestedKeyAppendsAtEnd(t *testing.T) {
+// TestNestedValueBlockScope 验证块内取值不会越界命中后面别的块里的同名键。
+//
+// 踩过的坑：nestedValue / deepValue 原来也带 (?s)，`.*` 贪婪吞到文件末尾。
+// 把 prefixes.v6 删掉之后，读取路径又从后面的块里翻出一个同名键，
+// 页面开关照样显示已勾选——删了却没生效，看着就像「开关是假的」。
+func TestNestedValueBlockScope(t *testing.T) {
+	content := "prefixes:\n" +
+		"  v4: 100.64.0.0/10\n" +
+		"\n" +
+		"  # allocation strategy\n" +
+		"  allocation: sequential\n" +
+		"\n" +
+		"dns:\n" +
+		"  magic_dns: true\n" +
+		"  v6: other-block-value\n" +
+		"  base_domain: hs.example.com\n"
+
+	if got := nestedValue(content, "prefixes", "v6"); got != "" {
+		t.Fatalf("prefixes 块没有 v6，却读到了 %q（越界命中了别的块）", got)
+	}
+	if got := nestedValue(content, "prefixes", "v4"); got != "100.64.0.0/10" {
+		t.Fatalf("prefixes.v4 = %q，期望 100.64.0.0/10", got)
+	}
+	if got := nestedValue(content, "dns", "v6"); got != "other-block-value" {
+		t.Fatalf("dns.v6 = %q，期望 other-block-value", got)
+	}
+	if got := nestedValue(content, "dns", "base_domain"); got != "hs.example.com" {
+		t.Fatalf("dns.base_domain = %q，期望 hs.example.com", got)
+	}
+	// 块内先有的 v6 仍要读对。
+	withV6 := strings.Replace(content, "  # allocation strategy", "  v6: fd7a::/48\n  # allocation strategy", 1)
+	if got := nestedValue(withV6, "prefixes", "v6"); got != "fd7a::/48" {
+		t.Fatalf("prefixes.v6 = %q，期望 fd7a::/48", got)
+	}
+}
+
+// TestSetNestedKeyInsertPos 验证块内新增的键插在正确位置，且不会粘到上一行。
+func TestSetNestedKeyInsertPos(t *testing.T) {
 	got, err := setNestedKey("prefixes:\n  v4: 100.64.0.0/10\n", "prefixes", "v6", "fd7a:115c:a1e0::/48")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "prefixes:\n  v4: 100.64.0.0/10\n  v6: fd7a:115c:a1e0::/48\n"
 	if got != want {
-		t.Fatalf("新键没有追加到块末尾:\n got: %q\nwant: %q", got, want)
+		t.Fatalf("新键没有插在 v4 之后:\n got: %q\nwant: %q", got, want)
 	}
 	// 块内最后一行没有换行时，新键也不能被粘到同一行。
 	got2, err := setNestedKey("prefixes:\n  v4: 100.64.0.0/10", "prefixes", "v6", "fd7a::/48")
@@ -258,6 +294,54 @@ func TestSetNestedKeyAppendsAtEnd(t *testing.T) {
 	want2 := "prefixes:\n  v4: 100.64.0.0/10\n  v6: fd7a::/48\n"
 	if got2 != want2 {
 		t.Fatalf("块末行无换行时新键被粘连:\n got: %q\nwant: %q", got2, want2)
+	}
+}
+
+// TestNestedKeyBlockScope 验证块内增删键只影响目标块。
+//
+// 这是踩过的坑：块定位正则原来带 (?s)，.* 贪婪吞到文件末尾，
+// 于是「新增键」被追加到**文件末尾**（写出一个顶层键，headscale 根本不认，
+// 而 configtest 还会因为容忍未知键而放行），「删除键」也会误伤后面别的块里的同名键。
+func TestNestedKeyBlockScope(t *testing.T) {
+	// 形状照抄线上 config.yaml：prefixes 块后面有空行、注释段和另一个键，
+	// 再往后还有别的顶层块。
+	base := "server_url: https://h:18080\n" +
+		"prefixes:\n" +
+		"  v4: 100.64.0.0/10\n" +
+		"\n" +
+		"  # Strategy used for allocation of IPs to nodes.\n" +
+		"  allocation: sequential\n" +
+		"\n" +
+		"dns:\n" +
+		"  magic_dns: false\n" +
+		"  v6: other-block-value\n"
+
+	got, err := setNestedKey(base, "prefixes", "v6", "fd7a:115c:a1e0::/48")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "server_url: https://h:18080\n" +
+		"prefixes:\n" +
+		"  v4: 100.64.0.0/10\n" +
+		"  v6: fd7a:115c:a1e0::/48\n" +
+		"\n" +
+		"  # Strategy used for allocation of IPs to nodes.\n" +
+		"  allocation: sequential\n" +
+		"\n" +
+		"dns:\n" +
+		"  magic_dns: false\n" +
+		"  v6: other-block-value\n"
+	if got != want {
+		t.Fatalf("新键没有落到 prefixes 块内（或位置不对）:\n got: %q\nwant: %q", got, want)
+	}
+
+	// 删除时不能误伤后面其它块里的同名键。
+	got2 := deleteNestedKey(got, "prefixes", "v6")
+	if !strings.Contains(got2, "  v6: other-block-value") {
+		t.Fatalf("删键误伤了别的块里的同名键:\n%s", got2)
+	}
+	if strings.Contains(got2, "fd7a:115c:a1e0::/48") {
+		t.Fatalf("prefixes.v6 没有被删掉:\n%s", got2)
 	}
 }
 
