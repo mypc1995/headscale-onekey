@@ -1,9 +1,0 @@
-# 本地工作目录，不发布
-hc-i18n/
-.workbuddy/
-
-# 临时文件
-*.log
-*.tmp
-*.swp
-.DS_Store
