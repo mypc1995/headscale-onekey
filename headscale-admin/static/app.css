@@ -557,3 +557,35 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .mon-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* 客户端一键接入 */
+.join-card .join-intro { margin-top: 0; }
+.join-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin: 12px 0 14px; }
+.join-item { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.join-label { flex: none; font-size: .82rem; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .04em; }
+.join-value { padding: 6px 10px; background: var(--bg-primary); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); word-break: break-all; }
+.join-missing { font-size: .9rem; color: var(--warning); }
+.join-missing a { color: var(--accent); font-weight: 600; }
+.join-cmd-row { display: flex; align-items: stretch; gap: 10px; }
+.join-cmd { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; padding: 12px 14px; background: var(--bg-primary); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); word-break: break-all; line-height: 1.7; }
+.join-part { color: var(--accent); font-weight: 700; }
+.join-ph { color: var(--warning); font-style: normal; font-weight: 700; }
+#join-copy { flex: none; align-self: center; white-space: nowrap; }
+#join-copy:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+#join-copy.copied, .key-copy.copied { color: var(--success); }
+.join-incomplete { margin-top: 10px; }
+.icon-btn { padding: 4px 7px; }
+.key-cell { white-space: nowrap; }
+.key-text { margin-right: 2px; }
+.key-cell .key-use { font-size: .82rem; }
+@media (max-width: 780px) {
+  .join-grid { grid-template-columns: 1fr; }
+  .join-cmd-row { flex-direction: column; }
+  #join-copy { align-self: flex-start; }
+}
+
+/* 节点实时速度列与说明行 */
+.node-speed { white-space: nowrap; line-height: 1.6; }
+.node-speed .ok { color: var(--success); font-weight: 600; }
+.node-speed .accent { color: var(--accent); font-weight: 600; }
+.node-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .84rem; }

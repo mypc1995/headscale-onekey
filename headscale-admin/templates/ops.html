@@ -56,13 +56,14 @@
   <div class="notice warn" id="node-error" {{if not .Data.Nodes.Error}}hidden{{end}}>{{icon "x" 17}}<span id="node-error-text" data-tpl="{{t .Lang "nodeMon.stale" "__E__"}}">{{t .Lang "nodeMon.stale" .Data.Nodes.Error}}</span></div>
   <div class="table-wrap" id="node-table" {{if not .Data.Nodes.Nodes}}hidden{{end}}>
     <table>
-      <thead><tr><th>{{t .Lang "nodeMon.node"}}</th><th>{{t .Lang "nodeMon.user"}}</th><th>{{t .Lang "nodeMon.ip"}}</th><th>{{t .Lang "nodeMon.status"}}</th><th>{{t .Lang "nodeMon.lastSeen"}}</th><th>{{t .Lang "nodeMon.client"}}</th><th>{{t .Lang "nodeMon.expiry"}}</th><th>{{t .Lang "nodeMon.tagsRoutes"}}</th></tr></thead>
-      <tbody id="node-rows" data-routes="{{t .Lang "nodeMon.routes"}}">
+      <thead><tr><th>{{t .Lang "nodeMon.node"}}</th><th>{{t .Lang "nodeMon.user"}}</th><th>{{t .Lang "nodeMon.ip"}}</th><th>{{t .Lang "nodeMon.status"}}</th><th>{{t .Lang "nodeMon.speed"}}</th><th>{{t .Lang "nodeMon.lastSeen"}}</th><th>{{t .Lang "nodeMon.client"}}</th><th>{{t .Lang "nodeMon.expiry"}}</th><th>{{t .Lang "nodeMon.tagsRoutes"}}</th></tr></thead>
+      <tbody id="node-rows" data-routes="{{t .Lang "nodeMon.routes"}}" data-speed-na="{{t .Lang "nodeMon.speedNA"}}">
         {{range .Data.Nodes.Nodes}}<tr>
           <td class="node-name"><b>{{.Name}}</b><div class="muted small">#{{.ID}}</div></td>
           <td class="small">{{.User}}</td>
           <td class="small mono nowrap">{{if .IPs}}{{join .IPs ", "}}{{else}}—{{end}}</td>
           <td><span class="badge {{if eq .State "online"}}success{{else if eq .State "expired"}}danger{{else}}muted{{end}}">{{if eq .State "online"}}<span class="dot"></span>{{end}}{{.StateText}}</span></td>
+          <td class="small node-speed">{{if .SpeedAvail}}<span class="ok">↓ {{.SpeedDownText}}</span><br><span class="accent">↑ {{.SpeedUpText}}</span>{{else}}<span class="muted" title="{{t $.Lang "nodeMon.speedNA"}}">—</span>{{end}}</td>
           <td class="small node-time">{{.LastSeenText}}<div class="muted">{{.LastSeenAbs}}</div></td>
           <td class="small node-client">{{if .Version}}{{.Version}}{{else}}—{{end}}<div class="muted">{{.OSText}} · {{.RegisterText}}</div></td>
           <td class="small node-expiry">{{.ExpiryText}}</td>
@@ -72,6 +73,10 @@
     </table>
   </div>
   <div class="empty" id="node-empty" {{if .Data.Nodes.Nodes}}hidden{{end}}>{{icon "server" 18}} {{t .Lang "nodeMon.empty"}}</div>
+  <div class="net-legend node-legend">
+    <span class="muted">{{t .Lang "nodeMon.speedNote"}}</span>
+    <span class="muted" id="node-updated" data-tpl="{{t .Lang "nodeMon.updated" "__T__"}}">{{t .Lang "nodeMon.updated" .Data.Nodes.Updated}}</span>
+  </div>
 </section>
 
 <section class="card" id="netmon">

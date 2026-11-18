@@ -49,6 +49,7 @@ case "$*" in
   *"users list"*) echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
   *"nodes list"*) echo 'null' ;;
   *"preauthkeys list"*) echo '[]' ;;
+  *"preauthkeys create"*) echo '{"key":"hskey-test-123"}' ;;
   *"apikeys list"*) echo '[]' ;;
   *"version"*) echo 'headscale version v0.29.7' ;;
   *) echo '{}' ;;
@@ -116,16 +117,27 @@ curl -s -b "$JAR" "$BASE/api/netmon" | grep -c '"ifaces"' >/dev/null && ok "网�
 
 info "验证本机资源与节点监控"
 curl -s -b "$JAR" "$BASE/ops" -o "$TMPDIR/ops.html"
-for kw in '本机资源' '节点监控' 'CPU 使用率' '内存使用率' '节点总数' '告警'; do
+if [[ "$(uname -s)" == "Linux" ]]; then
+  for kw in 'CPU 使用率' '内存使用率'; do
+    grep -q "$kw" "$TMPDIR/ops.html" && ok "运维页包含「$kw」" || fail "运维页缺少「$kw」"
+  done
+  grep -q 'id="host-cpu-bar"' "$TMPDIR/ops.html" && ok "本机 CPU 进度条存在" || fail "缺少 CPU 进度条"
+  grep -q 'id="host-mem-bar"' "$TMPDIR/ops.html" && ok "本机内存进度条存在" || fail "缺少内存进度条"
+else
+  info "非 Linux 环境没有 /proc，跳过本机资源面板断言（页面显示不可用占位，属预期）"
+fi
+for kw in '本机资源' '节点监控' '节点总数' '告警'; do
   grep -q "$kw" "$TMPDIR/ops.html" && ok "运维页包含「$kw」" || fail "运维页缺少「$kw」"
 done
-grep -q 'id="host-cpu-bar"' "$TMPDIR/ops.html" && ok "本机 CPU 进度条存在" || fail "缺少 CPU 进度条"
-grep -q 'id="host-mem-bar"' "$TMPDIR/ops.html" && ok "本机内存进度条存在" || fail "缺少内存进度条"
 grep -q 'id="node-rows"' "$TMPDIR/ops.html" && ok "节点监控表格存在" || fail "缺少节点监控表格"
+grep -q '实时速度' "$TMPDIR/ops.html" && ok "节点监控包含实时速度列" || fail "缺少实时速度列"
+grep -q 'id="node-updated"' "$TMPDIR/ops.html" && ok "节点监控标注数据更新时间" || fail "缺少数据更新时间"
+grep -q 'nodeMon.speedNA\|控制面拿不到节点流量' "$TMPDIR/ops.html" && ok "网速不可用时说明文案就绪" || fail "缺少网速不可用说明"
 curl -s -b "$JAR" "$BASE/api/monitor" -o "$TMPDIR/monitor.json"
-for kw in '"host"' '"cpu_percent"' '"mem_percent"' '"nodes"' '"thresholds"' '"alerts"'; do
+for kw in '"host"' '"cpu_percent"' '"mem_percent"' '"nodes"' '"thresholds"' '"alerts"' '"speed_source"'; do
   grep -q "$kw" "$TMPDIR/monitor.json" && ok "监控接口包含 $kw" || fail "监控接口缺少 $kw"
 done
+grep -q '"speed_source":false' "$TMPDIR/monitor.json" && ok "未配置网速源时明确标记不可用" || fail "网速源状态标记异常"
 if [[ "$(uname -s)" == "Linux" ]]; then
   grep -q '"available":true' "$TMPDIR/monitor.json" && ok "本机资源采集可用" || fail "本机资源采集不可用"
   grep -q '"cpu_count":[1-9]' "$TMPDIR/monitor.json" && ok "CPU 核数已采集" || fail "CPU 核数缺失"
@@ -185,14 +197,36 @@ else
   info "非 Linux 环境无法执行 headscale configtest，跳过写入链路（由远程测试覆盖）"
 fi
 
+info "验证客户端一键接入"
+curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys.html"
+for kw in '客户端一键接入' 'id="join-cmd"' 'id="join-copy"' 'data-server-url="http://127.0.0.1:8080"'; do
+  grep -q "$kw" "$TMPDIR/keys.html" && ok "密钥页包含「$kw」" || fail "密钥页缺少「$kw」"
+done
+grep -q '尚未创建密钥' "$TMPDIR/keys.html" && ok "未创建密钥时有占位提示" || fail "缺少密钥占位提示"
+grep -q 'id="join-copy" disabled' "$TMPDIR/keys.html" && ok "命令不完整时复制按钮禁用" || fail "复制按钮未禁用"
+if [[ "$(uname -s)" == "Linux" ]]; then
+  KEY_CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/keys.html" | head -1 | sed 's/.*value="//;s/"//')"
+  [[ "$(curl -s -b "$JAR" -X POST "$BASE/keys/preauth/create" -d "csrf=${KEY_CSRF}&user_id=1&expiration=24h" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "创建预授权密钥成功" || fail "创建预授权密钥失败"
+  curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys2.html"
+  grep -q 'data-join-key="hskey-test-123"' "$TMPDIR/keys2.html" && ok "新密钥自动填入接入卡片" || fail "新密钥未自动填入"
+  grep -q 'tailscale up --login-server=http://127.0.0.1:8080 --authkey=hskey-test-123' "$TMPDIR/keys2.html" && ok "接入命令自动拼接完成" || fail "接入命令未拼接"
+  grep -q '自动填入上方' "$TMPDIR/keys2.html" && ok "生成提示指向接入卡片" || fail "生成提示未更新"
+  curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys3.html"
+  grep -q 'data-join-key=""' "$TMPDIR/keys3.html" && ok "密钥仅显示一次，刷新后不再带出" || fail "密钥被重复展示"
+else
+  info "非 Linux 环境无法执行 fake headscale，跳过密钥创建链路（由远程测试覆盖）"
+fi
+
 info "验证中英文切换"
 curl -sL -b "$JAR" -c "$JAR" "$BASE/lang?lang=en&next=/" -o /dev/null
 curl -s -b "$JAR" "$BASE/" | grep -c 'Dashboard' >/dev/null && ok "英文界面标题生效" || fail "英文界面未生效"
 curl -s -b "$JAR" "$BASE/ops" | grep -c 'Live network speed' >/dev/null && ok "英文网速文案生效" || fail "英文网速文案缺失"
 curl -s -b "$JAR" "$BASE/ops" | grep -c 'Host resources' >/dev/null && ok "英文本机资源文案生效" || fail "英文本机资源文案缺失"
 curl -s -b "$JAR" "$BASE/ops" | grep -c 'Node monitoring' >/dev/null && ok "英文节点监控文案生效" || fail "英文节点监控文案缺失"
+curl -s -b "$JAR" "$BASE/ops" | grep -c 'Live speed' >/dev/null && ok "英文实时速度文案生效" || fail "英文实时速度文案缺失"
 curl -s -b "$JAR" "$BASE/users" | grep -c 'New user' >/dev/null && ok "英文表单文案生效" || fail "英文表单文案缺失"
 curl -s -b "$JAR" "$BASE/settings" | grep -c 'Certificate auto-renewal' >/dev/null && ok "英文配置页生效" || fail "英文配置页缺失"
+curl -s -b "$JAR" "$BASE/keys" | grep -c 'One-click client join' >/dev/null && ok "英文一键接入文案生效" || fail "英文一键接入文案缺失"
 curl -sL -b "$JAR" -c "$JAR" "$BASE/lang?lang=zh&next=/" -o /dev/null
 curl -s -b "$JAR" "$BASE/" | grep -c '总览' >/dev/null && ok "切回中文生效" || fail "切回中文失败"
 

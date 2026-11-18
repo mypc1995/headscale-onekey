@@ -22,6 +22,7 @@ type App struct {
 	net        *NetMonitor
 	host       *HostMonitor
 	nodes      *NodeMonitor
+	joinKeys   *joinKeyStore
 	thresholds AlertThresholds
 	tmpl       *template.Template
 	port       string
@@ -137,7 +138,7 @@ func main() {
 	hs := NewHSClient()
 	a := &App{
 		store: store, sessions: NewSessionManager(store.DB, *secureCookie), hs: hs, net: NewNetMonitor(),
-		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), thresholds: defaultAlertThresholds(),
+		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), joinKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir,
 	}
 

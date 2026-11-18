@@ -17,9 +17,12 @@ type usersData struct {
 }
 
 type keysData struct {
-	Preauth []map[string]any
-	APIKeys []map[string]any
-	Users   []HSUser
+	Preauth   []map[string]any
+	APIKeys   []map[string]any
+	Users     []HSUser
+	ServerURL string // 配置里的对外访问地址，自动填入接入命令
+	JoinKey   string // 刚创建的预授权密钥（仅显示一次）
+	JoinCmd   string // 拼接好的接入命令；缺地址或密钥时为空，前端显示占位提示
 }
 
 type networkData struct {
@@ -95,6 +98,13 @@ func (a *App) keysPage(w http.ResponseWriter, r *http.Request) {
 	if v, err := a.hs.Users(); err == nil {
 		d.Users = v
 	}
+	// 对外访问地址以配置为准：绑定 IP/域名并保存后，这里自动带上。
+	if v, err := a.hs.ReadConfigText(); err == nil {
+		d.ServerURL = topValue(v, "server_url")
+	}
+	// 刚生成的密钥只显示这一次，取出来就清掉。
+	d.JoinKey = a.joinKeys.Take(sessionFrom(r).Token)
+	d.JoinCmd = joinCommand(d.ServerURL, d.JoinKey)
 	a.render(w, r, "keys", d)
 }
 
@@ -303,7 +313,9 @@ func (a *App) preauthCreate(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.preauthOnce", extractKey(out)))
+	// 密钥只显示一次：暂存到会话，重定向后的密钥页自动填入接入命令。
+	a.joinKeys.Set(sessionFrom(r).Token, extractKey(out))
+	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.preauthOnce"))
 }
 
 func (a *App) preauthExpire(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -238,5 +239,83 @@ func TestAlertThresholdsFromEnv(t *testing.T) {
 	t.Setenv("HSA_ALERT_MEM", "500")
 	if th := defaultAlertThresholds(); th.CPU != 85 || th.Mem != 100 {
 		t.Fatalf("fallback thresholds = %+v", th)
+	}
+}
+
+func TestParseSpeedFile(t *testing.T) {
+	counters := parseSpeedFile([]byte(`{"12": {"rx_bytes": 1000, "tx_bytes": 2000}, "laptop": {"rx": 5, "tx": 6}}`))
+	if c := counters["12"]; c.rx != 1000 || c.tx != 2000 {
+		t.Fatalf("id entry = %+v", c)
+	}
+	if c := counters["laptop"]; c.rx != 5 || c.tx != 6 {
+		t.Fatalf("name entry = %+v", c)
+	}
+	if got := parseSpeedFile([]byte("not json")); len(got) != 0 {
+		t.Fatalf("invalid json parsed to %+v", got)
+	}
+	if got := parseSpeedFile([]byte(`{"a": {}}`)); len(got) != 1 {
+		t.Fatalf("empty counters should still keep the key: %+v", got)
+	}
+}
+
+func TestNodeSpeedRates(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/speed.json"
+	nodes := []NodeStat{{ID: 12, Name: "laptop"}, {ID: 13, Name: "phone"}}
+	m := &NodeMonitor{speedFile: file, prevSpeed: map[string]speedCounter{}}
+
+	// 数据源不存在：整体不可用，节点显示占位。
+	if _, ok := m.nodeSpeedRates(nodes, time.Now()); ok {
+		t.Fatal("missing file should mark source unavailable")
+	}
+
+	// 首轮采样只有计数器，速率为 0 但数据可用。
+	t0 := time.Now()
+	writeSpeedFile(t, file, `{"12": {"rx_bytes": 1000, "tx_bytes": 500}}`)
+	rates, ok := m.nodeSpeedRates(nodes, t0)
+	if !ok {
+		t.Fatal("first sample should be available")
+	}
+	if r := rates["12"]; r.rx != 0 || r.tx != 0 {
+		t.Fatalf("first sample rate = %+v, want 0", r)
+	}
+	if _, found := rates["13"]; found {
+		t.Fatal("node without counters must not get a rate entry")
+	}
+
+	// 15 秒后增量 1500/300 字节 → 约 0.098 KB/s 下行、0.02 KB/s 上行。
+	writeSpeedFile(t, file, `{"12": {"rx_bytes": 2500, "tx_bytes": 800}}`)
+	rates, ok = m.nodeSpeedRates(nodes, t0.Add(15*time.Second))
+	if !ok {
+		t.Fatal("second sample should be available")
+	}
+	r := rates["12"]
+	if wantRx, wantTx := 1500.0/15/1024, 300.0/15/1024; r.rx < wantRx*0.99 || r.rx > wantRx*1.01 || r.tx < wantTx*0.99 || r.tx > wantTx*1.01 {
+		t.Fatalf("rate = %+v, want ~%v/%v KB/s", r, wantRx, wantTx)
+	}
+
+	// 计数器回退（节点或 agent 重启）按 0 处理，不产生负速率。
+	writeSpeedFile(t, file, `{"12": {"rx_bytes": 10, "tx_bytes": 5}}`)
+	rates, _ = m.nodeSpeedRates(nodes, t0.Add(30*time.Second))
+	if r := rates["12"]; r.rx != 0 || r.tx != 0 {
+		t.Fatalf("counter reset rate = %+v, want 0", r)
+	}
+
+	// 也支持按节点名匹配。
+	writeSpeedFile(t, file, `{"laptop": {"rx_bytes": 100, "tx_bytes": 100}}`)
+	m2 := &NodeMonitor{speedFile: file, prevSpeed: map[string]speedCounter{}}
+	m2.nodeSpeedRates(nodes, t0)
+	writeSpeedFile(t, file, `{"laptop": {"rx_bytes": 250, "tx_bytes": 100}}`)
+	rates, _ = m2.nodeSpeedRates(nodes, t0.Add(15*time.Second))
+	want := 150.0 / 15 / 1024
+	if r := rates["12"]; r.rx < want*0.99 || r.rx > want*1.01 {
+		t.Fatalf("name-matched rate = %+v, want ~%v KB/s", r, want)
+	}
+}
+
+func writeSpeedFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,6 +15,10 @@ import (
 // NodeStat 是单个节点的监控数据。原始字段来自 `headscale nodes list -o json`，
 // 线上没有采集节点的 CPU / 内存（Tailscale 客户端不上报这些数据），
 // 因此这里监控的是控制面能看到的状态类指标。
+// 实时网速（RxRate/TxRate）同样不在控制面：节点间流量走 WireGuard 直连或
+// DERP，headscale 既没有按节点的流量计数器，CLI 和 metrics 也不暴露。
+// 所以网速由节点侧采集代理把计数器写进 HSA_NODE_SPEED_FILE，
+// 这里按两次采样的差值换算速率；文件不存在时 SpeedAvail=false，界面显示占位。
 type NodeStat struct {
 	ID              uint64    `json:"id"`
 	Name            string    `json:"name"`
@@ -30,13 +35,20 @@ type NodeStat struct {
 	AvailableRoutes int       `json:"available_routes"`
 	Register        string    `json:"register"`
 
+	// 实时网速（KB/s，与实时网速面板的口径一致）。SpeedAvail=false 表示没有可用数据源，前端显示占位。
+	RxRate     float64 `json:"rx_rate"`
+	TxRate     float64 `json:"tx_rate"`
+	SpeedAvail bool    `json:"speed_avail"`
+
 	// 以下字段只在渲染时按语言填充，不参与缓存。
-	StateText    string `json:"state_text"`
-	LastSeenText string `json:"last_seen_text"`
-	LastSeenAbs  string `json:"last_seen_abs"`
-	ExpiryText   string `json:"expiry_text"`
-	OSText       string `json:"os_text"`
-	RegisterText string `json:"register_text"`
+	StateText     string `json:"state_text"`
+	LastSeenText  string `json:"last_seen_text"`
+	LastSeenAbs   string `json:"last_seen_abs"`
+	ExpiryText    string `json:"expiry_text"`
+	OSText        string `json:"os_text"`
+	RegisterText  string `json:"register_text"`
+	SpeedDownText string `json:"speed_down_text"`
+	SpeedUpText   string `json:"speed_up_text"`
 }
 
 // NodeSnapshot 是节点监控的汇总快照，同时作为 JSON 输出结构。
@@ -52,15 +64,30 @@ type NodeSnapshot struct {
 	Nodes     []NodeStat `json:"nodes"`
 	History   []int      `json:"history"` // 每次采集的在线节点数
 	Updated   string     `json:"updated"`
+	// SpeedSource 表示网速数据源（计数器文件）这次是否成功读取。
+	// false 时各节点网速显示占位，并提示如何接入采集代理。
+	SpeedSource bool `json:"speed_source"`
 }
 
 // NodeMonitor 周期性执行 headscale CLI，把节点状态缓存起来，
 // 让页面请求不再直接等待 CLI；CLI 失败时保留上一次成功的数据并标记过期。
+// 网速计数器来自节点侧代理写入的 JSON 文件，这里保存上一轮计数，
+// 用差值除以间隔得到速率（与 cpuPercent 的 tick 差值思路一致）。
 type NodeMonitor struct {
 	hs      *HSClient
 	mu      sync.RWMutex
 	history []int
 	snap    NodeSnapshot
+
+	speedFile   string
+	prevSpeed   map[string]speedCounter
+	prevSpeedAt time.Time
+}
+
+// speedCounter 是某个节点一次采样读到的累计收/发字节数。
+type speedCounter struct {
+	rx uint64
+	tx uint64
 }
 
 const (
@@ -69,7 +96,11 @@ const (
 )
 
 func NewNodeMonitor(hs *HSClient) *NodeMonitor {
-	m := &NodeMonitor{hs: hs}
+	m := &NodeMonitor{
+		hs:        hs,
+		speedFile: os.Getenv("HSA_NODE_SPEED_FILE"),
+		prevSpeed: map[string]speedCounter{},
+	}
 	m.sample()
 	go func() {
 		t := time.NewTicker(nodeSamplePeriod)
@@ -106,6 +137,7 @@ func (m *NodeMonitor) sample() {
 		prev := m.snap
 		snap.Nodes = append([]NodeStat{}, prev.Nodes...)
 		snap.Total, snap.Online, snap.Offline, snap.Expired = prev.Total, prev.Online, prev.Offline, prev.Expired
+		snap.SpeedSource = prev.SpeedSource
 		snap.History = append([]int{}, m.history...)
 		m.snap = snap
 		m.mu.Unlock()
@@ -124,6 +156,17 @@ func (m *NodeMonitor) sample() {
 		snap.Nodes = append(snap.Nodes, n)
 	}
 	snap.Offline = snap.Total - snap.Online
+
+	rates, speedOK := m.nodeSpeedRates(snap.Nodes, now)
+	for i := range snap.Nodes {
+		key := strconv.FormatUint(snap.Nodes[i].ID, 10)
+		if r, ok := rates[key]; ok {
+			snap.Nodes[i].RxRate = r.rx
+			snap.Nodes[i].TxRate = r.tx
+			snap.Nodes[i].SpeedAvail = true
+		}
+	}
+	snap.SpeedSource = speedOK
 
 	m.mu.Lock()
 	m.history = append(m.history, snap.Online)
@@ -144,6 +187,87 @@ func (m *NodeMonitor) Snapshot() NodeSnapshot {
 	return s
 }
 
+// speedRate 是换算后的速率（KB/s，与 fmtRate 的输入口径一致）。
+type speedRate struct {
+	rx float64
+	tx float64
+}
+
+// parseSpeedFile 解析节点侧采集代理写入的计数器文件。
+// 格式是一个按节点 ID 或节点名索引的 JSON 对象：
+//
+//	{"12": {"rx_bytes": 1024, "tx_bytes": 2048}, "laptop": {...}}
+//
+// 返回的 map 同时按原样保留两种键，匹配在 nodeSpeedRates 里做。
+func parseSpeedFile(content []byte) map[string]speedCounter {
+	var raw map[string]struct {
+		RxBytes uint64 `json:"rx_bytes"`
+		TxBytes uint64 `json:"tx_bytes"`
+		Rx      uint64 `json:"rx"`
+		Tx      uint64 `json:"tx"`
+	}
+	if json.Unmarshal(content, &raw) != nil {
+		return map[string]speedCounter{}
+	}
+	out := map[string]speedCounter{}
+	for key, v := range raw {
+		rx, tx := v.RxBytes, v.TxBytes
+		if rx == 0 && tx == 0 {
+			rx, tx = v.Rx, v.Tx
+		}
+		out[key] = speedCounter{rx: rx, tx: tx}
+	}
+	return out
+}
+
+// nodeSpeedRates 读取计数器文件并按两次采样的差值换算每个节点的速率。
+// 返回的第二个值表示数据源这次是否可用（文件存在且能解析）；
+// 首轮采样或计数器清零（节点/agent 重启）时速率按 0 处理。
+func (m *NodeMonitor) nodeSpeedRates(nodes []NodeStat, now time.Time) (map[string]speedRate, bool) {
+	rates := map[string]speedRate{}
+	if m.speedFile == "" {
+		return rates, false
+	}
+	content, err := os.ReadFile(m.speedFile)
+	if err != nil {
+		return rates, false
+	}
+	counters := parseSpeedFile(content)
+	if len(counters) == 0 {
+		return rates, false
+	}
+
+	m.mu.Lock()
+	prev, prevAt := m.prevSpeed, m.prevSpeedAt
+	next := map[string]speedCounter{}
+	m.prevSpeed = next
+	m.prevSpeedAt = now
+	m.mu.Unlock()
+
+	dt := now.Sub(prevAt).Seconds()
+	for _, n := range nodes {
+		idKey := strconv.FormatUint(n.ID, 10)
+		cur, ok := counters[idKey]
+		if !ok && n.Name != "" {
+			cur, ok = counters[n.Name]
+		}
+		if !ok {
+			continue
+		}
+		next[idKey] = cur
+		p, hasPrev := prev[idKey]
+		if !hasPrev || dt <= 0 || cur.rx < p.rx || cur.tx < p.tx {
+			rates[idKey] = speedRate{}
+			continue
+		}
+		rates[idKey] = speedRate{
+			rx: float64(cur.rx-p.rx) / dt / 1024,
+			tx: float64(cur.tx-p.tx) / dt / 1024,
+		}
+	}
+	return rates, true
+}
+
 // newNodesView 复制一份快照并填充本地化文案，避免修改缓存中的原始数据。
 func newNodesView(s NodeSnapshot, lang string) NodeSnapshot {
 	now := time.Now()
@@ -160,6 +284,12 @@ func newNodesView(s NodeSnapshot, lang string) NodeSnapshot {
 		n.ExpiryText = expiryText(n.Expiry, lang, now)
 		n.OSText = friendlyOS(n.OS)
 		n.RegisterText = friendlyRegister(n.Register, lang)
+		if n.SpeedAvail {
+			n.SpeedDownText = fmtRate(n.RxRate)
+			n.SpeedUpText = fmtRate(n.TxRate)
+		} else {
+			n.SpeedDownText, n.SpeedUpText = "—", "—"
+		}
 		if n.User == "" {
 			n.User = "—"
 		}

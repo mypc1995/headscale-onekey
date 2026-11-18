@@ -1,4 +1,42 @@
 {{define "keys"}}{{template "head" .}}
+<section class="card join-card" id="join"
+  data-server-url="{{.Data.ServerURL}}"
+  data-join-key="{{.Data.JoinKey}}"
+  data-ph-server="{{t .Lang "join.ph.server"}}"
+  data-ph-key="{{t .Lang "join.ph.key"}}"
+  data-label-copy="{{t .Lang "join.copy"}}"
+  data-label-copied="{{t .Lang "join.copied"}}"
+  data-label-show="{{t .Lang "join.showKey"}}"
+  data-label-hide="{{t .Lang "join.hideKey"}}">
+  <div class="card-head"><h2 class="card-title">{{icon "terminal" 18}} {{t .Lang "section.join"}}</h2></div>
+  <p class="hint join-intro">{{t .Lang "join.intro"}}</p>
+  <div class="join-grid">
+    <div class="join-item">
+      <span class="join-label">server_url</span>
+      {{if .Data.ServerURL}}
+      <code class="mono join-value">{{.Data.ServerURL}}</code>
+      {{else}}
+      <span class="join-missing">{{t .Lang "join.noServer"}} <a href="/settings">{{t .Lang "join.goSettings"}}</a></span>
+      {{end}}
+    </div>
+    <div class="join-item">
+      <span class="join-label">key</span>
+      {{if .Data.JoinKey}}
+      <code class="mono join-value" id="join-key-value">••••••••••••••••</code>
+      <button type="button" class="btn btn-sm btn-ghost icon-btn" id="join-toggle" title="{{t .Lang "join.showKey"}}">{{icon "eye" 15}}</button>
+      <span class="badge info">{{t .Lang "join.onceBadge"}}</span>
+      {{else}}
+      <span class="join-missing">{{t .Lang "join.noKey"}}</span>
+      {{end}}
+    </div>
+  </div>
+  <div class="join-cmd-row">
+    <code class="mono join-cmd" id="join-cmd">{{if .Data.JoinCmd}}{{.Data.JoinCmd}}{{else}}tailscale up --login-server={{t .Lang "join.ph.server"}} --authkey={{t .Lang "join.ph.key"}}{{end}}</code>
+    <button type="button" class="btn btn-sm btn-primary" id="join-copy" {{if not .Data.JoinCmd}}disabled{{end}}>{{icon "copy" 14}} <span id="join-copy-label">{{t .Lang "join.copy"}}</span></button>
+  </div>
+  {{if not .Data.JoinCmd}}<p class="hint join-incomplete">{{t .Lang "join.incomplete"}}</p>{{end}}
+</section>
+
 <section class="card">
   <div class="card-head"><h2 class="card-title">{{icon "key" 18}} {{t .Lang "section.genPreauth"}}</h2></div>
   <form method="post" action="/keys/preauth/create" class="form-grid inline">
@@ -10,7 +48,6 @@
     <div class="form-group"><label class="check-label"><input class="form-checkbox" type="checkbox" name="ephemeral"> {{t .Lang "label.ephemeral"}}</label></div>
     <div class="form-group"><button class="btn btn-primary" type="submit">{{icon "bolt" 15}} {{t .Lang "action.generate"}}</button></div>
   </form>
-  <p class="hint">{{t .Lang "hint.join"}} <code>tailscale up --login-server=&lt;server_url&gt; --authkey=&lt;key&gt;</code></p>
 </section>
 
 <section class="card">
@@ -18,7 +55,14 @@
   {{if .Data.Preauth}}<div class="table-wrap"><table>
     <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.key"}}</th><th>{{t .Lang "col.expires"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
     <tbody>{{range .Data.Preauth}}<tr>
-      <td>{{field . "id"}}</td><td>{{userOf .}}</td><td><code>{{short (field . "key") 28}}</code></td><td class="muted small">{{tf (index . "expiration")}}</td>
+      <td>{{field . "id"}}</td><td>{{userOf .}}</td>
+      <td class="key-cell">{{$k := field . "key"}}{{if $k}}
+        <code class="mono key-text" data-key="{{$k}}">••••••••••••</code>
+        <button type="button" class="btn btn-sm btn-ghost icon-btn key-reveal" title="{{t $.Lang "join.showKey"}}">{{icon "eye" 14}}</button>
+        <button type="button" class="btn btn-sm btn-ghost icon-btn key-copy" title="{{t $.Lang "join.copyKey"}}">{{icon "copy" 14}}</button>
+        <button type="button" class="btn btn-sm btn-ghost key-use">{{t $.Lang "join.useKey"}}</button>
+      {{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="muted small">{{tf (index . "expiration")}}</td>
       <td class="ops">
         <form method="post" action="/keys/preauth/expire" onsubmit="return confirm('{{t $.Lang "confirm.expireKey"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>
         <form method="post" action="/keys/preauth/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteKey"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>

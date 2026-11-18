@@ -92,7 +92,9 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 - 总览：用户数、节点数、在线数、路由数、密钥数、服务状态、证书到期。
 - 节点：列表、重命名、过期、删除、标签、路由审批。
 - 用户：创建、重命名、删除，支持显示名与邮箱。
-- 密钥与接入：预授权密钥生成/失效/删除，API key 生成/失效/删除，客户端接入命令。有效期改为下拉选择：1 小时、24 小时、7 天、30 天、90 天、1 年、长期（100 年，等效永不过期）。
+- 密钥与接入：预授权密钥生成/失效/删除，API key 生成/失效/删除，客户端一键接入命令。有效期改为下拉选择：1 小时、24 小时、7 天、30 天、90 天、1 年、长期（100 年，等效永不过期）。
+  - 一键接入卡片：`server_url` 自动读取当前配置（绑定 IP/域名并保存后即生效），新生成的预授权密钥自动填入 `key`，页面实时拼出 `tailscale up --login-server=<server_url> --authkey=<key>`，一键复制。地址或密钥未就绪时命令显示占位提示且复制按钮禁用，避免复制到半截命令。
+  - 密钥默认打码显示，点眼睛图标切换显示/隐藏；列表中每条密钥可单独复制，或点「填入命令」直接用于接入卡片。新密钥只展示一次（按会话一次性暂存，刷新后不再带出），密钥不出现在 URL 与日志中。
 - 网络与策略：ACL 策略编辑、DNS/MagicDNS、DERP 开关、完整配置编辑；保存前自动备份并做 `configtest` 校验。
 - 运维与监控：本机 CPU/内存/负载/运行时长（3 秒采样、3 分钟曲线）、节点在线状态与握手/版本/到期/路由（15 秒采样）、阈值告警、服务状态、版本、证书到期、最近日志、重启服务，以及每 3 秒刷新的实时网速（读取 `/proc/net/dev`，含上下行速率、累计流量、各网卡明细与近期曲线；非 Linux 自动降级为不可用提示）。
 - 管理员：管理员增删改、角色（admin/readonly）、修改密码。
@@ -163,7 +165,18 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 
 **本机资源**：每 3 秒读取 `/proc/stat`、`/proc/meminfo`、`/proc/loadavg`、`/proc/uptime`，展示 CPU 使用率、内存使用率（已用/总量）、系统负载（1/5/15 分钟）、运行时长和最近 3 分钟的 CPU/内存曲线。CPU 使用率由两次采样的累计 tick 差值算出，首次采样显示 0；内存使用率按 `MemTotal - MemAvailable` 计算，老内核没有 `MemAvailable` 时退化为 `MemFree + Buffers + Cached`。非 Linux 环境没有 `/proc`，页面显示不可用提示，不影响其他功能。
 
-**节点监控**：后台每 15 秒执行一次 `headscale nodes list -o json`，缓存结果并展示节点总数、在线、离线、密钥过期数量，以及每个节点的名称、所属用户、虚拟 IP、在线状态、最后握手时间、客户端版本、系统、密钥到期、标签与路由数量。状态分在线、离线、密钥过期三种，密钥过期优先显示。CLI 读取失败时保留上一次成功的数据，并在卡片顶部提示「显示的是上一次成功采集的结果」。
+**节点监控**：后台每 15 秒执行一次 `headscale nodes list -o json`，缓存结果并展示节点总数、在线、离线、密钥过期数量，以及每个节点的名称、所属用户、虚拟 IP、在线状态、实时速度（下行/上行）、最后握手时间、客户端版本、系统、密钥到期、标签与路由数量。状态分在线、离线、密钥过期三种，密钥过期优先显示。CLI 读取失败时保留上一次成功的数据，并在卡片顶部提示「显示的是上一次成功采集的结果」。表格底部标注数据更新时间与采样周期。
+
+**节点实时速度**：节点间流量走 WireGuard 直连或 DERP，不经过控制服务器，headscale 的 CLI 与 Prometheus 指标都没有按节点的流量计数器，因此网速数据源是可选的——配置环境变量 `HSA_NODE_SPEED_FILE` 指向一个计数器 JSON 文件，由节点侧采集代理定期写入累计收发字节数，服务端按两次采样差值换算速率（与 CPU 利用率的 tick 差值同一思路），单位自动按 B/s、KB/s、MB/s 展示。文件格式按节点 ID 或节点名索引：
+
+```json
+{
+  "12": {"rx_bytes": 154600, "tx_bytes": 31220},
+  "laptop": {"rx_bytes": 1000, "tx_bytes": 500}
+}
+```
+
+未配置该变量、文件不存在或内容无法解析时，每个节点的速度列显示占位「—」，鼠标悬停可见原因说明，其余监控数据不受影响。计数器回退（节点或代理重启）时当轮速率按 0 处理，不会出现负值。速率口径与实时网速面板一致，均为 KB/s 基准。
 
 节点侧能采集到的只有控制面指标。Tailscale 客户端不会把 CPU、内存等主机资源上报给 headscale，因此各节点的 CPU/内存不在这个页面的能力范围内；如果确有需要，应在节点上部署采集 agent，把数据推到新增接口，按下面的扩展方式接入。
 
@@ -180,7 +193,7 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 **扩展方式**：
 
 - 新增本机指标：在 `hostmon.go` 的 `HostSnapshot` 加字段并在 `sample()` 里填充（例如读 `/proc/mounts` 统计磁盘占用），`newHostView` 补展示文案，前端加一个进度条。
-- 新增节点指标：在 `nodemont.go` 的 `nodeStatFromMap` 里从 CLI JSON 取字段并加入 `NodeStat`，模板与 `static/app.js` 的 `nodeRow` 各加一列。
+- 新增节点指标：在 `nodemont.go` 的 `nodeStatFromMap` 里从 CLI JSON 取字段并加入 `NodeStat`，模板与 `static/app.js` 的 `nodeRow` 各加一列；需要差值换算的计数器类指标（如网速）仿照 `nodeSpeedRates` 增加数据源即可。
 - 新增告警规则：在 `alerts.go` 实现 `func(alertInput, AlertThresholds) []MonitorAlert`，注册到 `alertRules` 切片，页面与接口输出不需要改动；阈值加到 `AlertThresholds` 并在 `defaultAlertThresholds` 里读环境变量。
 - 接通知渠道：`MonitorAlert` 的 `Key` 与 `Level` 已固定，可在规则求值后按 key 去重，再推送到邮件或 Webhook。
 
@@ -214,4 +227,4 @@ sudo bash remove-headcontrol.sh --keep-data   # 保留 /var/lib/headcontrol
 
 ## 许可证
 
-本仓库中的脚本、文档与管理界面源码采用 [MIT License](LICENSE)。详见 [NOTICE](NOTICE)。
+本仓库中的脚本、文档与管理界面源码采用 [MIT License](LICENSE)。

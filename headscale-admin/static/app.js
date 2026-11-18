@@ -159,6 +159,7 @@
   var memThreshold = parseFloat(root.getAttribute('data-mem')) || 90;
   var rows = document.getElementById('node-rows');
   var routesLabel = rows ? (rows.getAttribute('data-routes') || (isEn ? 'Routes' : '路由')) : '';
+  var speedNA = rows ? (rows.getAttribute('data-speed-na') || '') : '';
 
   function setText(id, v) {
     var el = document.getElementById(id);
@@ -234,6 +235,26 @@
     status.appendChild(badge);
     tr.appendChild(status);
 
+    var speed = cell(null, 'small node-speed');
+    if (n.speed_avail) {
+      var down = document.createElement('span');
+      down.className = 'ok';
+      down.textContent = '↓ ' + (n.speed_down_text || '—');
+      speed.appendChild(down);
+      speed.appendChild(document.createElement('br'));
+      var up = document.createElement('span');
+      up.className = 'accent';
+      up.textContent = '↑ ' + (n.speed_up_text || '—');
+      speed.appendChild(up);
+    } else {
+      var na = document.createElement('span');
+      na.className = 'muted';
+      na.textContent = '—';
+      if (speedNA) na.title = speedNA;
+      speed.appendChild(na);
+    }
+    tr.appendChild(speed);
+
     var seen = cell(n.last_seen_text, 'small node-time');
     var abs = document.createElement('div');
     abs.className = 'muted';
@@ -293,6 +314,13 @@
     if (empty) empty.hidden = has;
   }
 
+  function renderNodeMeta(n, updated) {
+    var el = document.getElementById('node-updated');
+    if (el && updated) {
+      el.textContent = (el.getAttribute('data-tpl') || '__T__').replace('__T__', updated);
+    }
+  }
+
   function renderAlerts(list) {
     var card = document.getElementById('alerts');
     var box = document.getElementById('alert-list');
@@ -321,10 +349,136 @@
         if (!d) return;
         renderHost(d.host, d.thresholds);
         renderNodes(d.nodes);
+        renderNodeMeta(d.nodes, d.updated);
         renderAlerts(d.alerts);
       })
       .catch(function () {});
   }
   refresh();
   setInterval(refresh, 5000);
+})();
+
+// 密钥页：客户端一键接入卡片 + 密钥显示/隐藏。
+// server_url 与 key 由服务端注入到 data 属性，命令在这里实时拼装，
+// 缺任一项时显示占位提示并禁用复制按钮，避免复制到半截命令。
+(function () {
+  var card = document.getElementById('join');
+  if (!card) return;
+  var EYE = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+
+  var state = {
+    url: card.getAttribute('data-server-url') || '',
+    key: card.getAttribute('data-join-key') || '',
+    show: false
+  };
+  var phServer = card.getAttribute('data-ph-server') || '<server_url>';
+  var phKey = card.getAttribute('data-ph-key') || '<key>';
+  var labelCopy = card.getAttribute('data-label-copy') || 'Copy';
+  var labelCopied = card.getAttribute('data-label-copied') || 'Copied';
+  var labelShow = card.getAttribute('data-label-show') || 'Show key';
+  var labelHide = card.getAttribute('data-label-hide') || 'Hide key';
+
+  var cmdEl = document.getElementById('join-cmd');
+  var copyBtn = document.getElementById('join-copy');
+  var copyLabel = document.getElementById('join-copy-label');
+  var keyValue = document.getElementById('join-key-value');
+  var toggle = document.getElementById('join-toggle');
+
+  function mask(v) { return v ? '••••••••••••••••' : ''; }
+  function part(text, cls) {
+    var el = document.createElement('span');
+    el.className = cls;
+    el.textContent = text;
+    return el;
+  }
+  function command() {
+    if (!state.url || !state.key) return '';
+    return 'tailscale up --login-server=' + state.url + ' --authkey=' + state.key;
+  }
+  function render() {
+    if (cmdEl) {
+      cmdEl.textContent = '';
+      cmdEl.appendChild(document.createTextNode('tailscale up --login-server='));
+      cmdEl.appendChild(part(state.url || phServer, state.url ? 'join-part' : 'join-ph'));
+      cmdEl.appendChild(document.createTextNode(' --authkey='));
+      cmdEl.appendChild(part(state.key ? (state.show ? state.key : mask(state.key)) : phKey, state.key ? 'join-part' : 'join-ph'));
+    }
+    if (copyBtn) copyBtn.disabled = !command();
+    if (keyValue) keyValue.textContent = state.show ? state.key : mask(state.key);
+    if (toggle) {
+      toggle.innerHTML = state.show ? EYE_OFF : EYE;
+      toggle.title = state.show ? labelHide : labelShow;
+    }
+  }
+
+  function copyText(text, done) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      done();
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+  }
+  function flashCopied(btn, labelEl) {
+    if (!labelEl) return;
+    labelEl.textContent = labelCopied;
+    if (btn) btn.classList.add('copied');
+    setTimeout(function () {
+      labelEl.textContent = labelCopy;
+      if (btn) btn.classList.remove('copied');
+    }, 1600);
+  }
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', function () {
+      var full = command();
+      if (!full) return;
+      copyText(full, function () { flashCopied(copyBtn, copyLabel); });
+    });
+  }
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      state.show = !state.show;
+      render();
+    });
+  }
+
+  // 密钥列表：显示/隐藏、复制、填入命令。
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('.key-reveal, .key-copy, .key-use') : null;
+    if (!t) return;
+    var cellEl = t.closest('.key-cell');
+    var textEl = cellEl ? cellEl.querySelector('.key-text') : null;
+    var key = textEl ? (textEl.getAttribute('data-key') || '') : '';
+    if (!key) return;
+    if (t.classList.contains('key-reveal')) {
+      var shown = textEl.classList.toggle('shown');
+      textEl.textContent = shown ? key : '••••••••••••';
+      t.innerHTML = shown ? EYE_OFF : EYE;
+      t.title = shown ? labelHide : labelShow;
+    } else if (t.classList.contains('key-copy')) {
+      copyText(key, function () {
+        t.classList.add('copied');
+        setTimeout(function () { t.classList.remove('copied'); }, 1200);
+      });
+    } else if (t.classList.contains('key-use')) {
+      state.key = key;
+      state.show = true;
+      render();
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+
+  render();
 })();
