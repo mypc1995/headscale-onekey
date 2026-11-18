@@ -372,6 +372,8 @@
     key: card.getAttribute('data-join-key') || '',
     show: false
   };
+  // headscale 列表接口返回的是打码密钥，不能用于接入命令。
+  if (state.key.indexOf('***') >= 0) state.key = '';
   var phServer = card.getAttribute('data-ph-server') || '<server_url>';
   var phKey = card.getAttribute('data-ph-key') || '<key>';
   var labelCopy = card.getAttribute('data-label-copy') || 'Copy';
@@ -461,7 +463,7 @@
     var cellEl = t.closest('.key-cell');
     var textEl = cellEl ? cellEl.querySelector('.key-text') : null;
     var key = textEl ? (textEl.getAttribute('data-key') || '') : '';
-    if (!key) return;
+    if (!key || key.indexOf('***') >= 0) return;
     if (t.classList.contains('key-reveal')) {
       var shown = textEl.classList.toggle('shown');
       textEl.textContent = shown ? key : '••••••••••••';

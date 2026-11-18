@@ -93,6 +93,7 @@ func main() {
 	funcs := template.FuncMap{
 		"field":  fieldValue,
 		"tf":     protoTime,
+		"masked": maskedKey,
 		"userOf": userOf,
 		"join":   strings.Join,
 		"list":   joinAny,

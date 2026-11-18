@@ -205,12 +205,33 @@ func str(v any) string {
 	}
 }
 
+// maskedKey 判断 headscale 返回的密钥是否被打码。
+// preauthkeys list 出于安全考虑只返回形如 hskey-auth-xxxx-*** 的脱敏值，
+// 这种值不能用于客户端接入，界面上不提供复制与填入命令。
+func maskedKey(v any) bool {
+	return strings.Contains(fmt.Sprint(v), "***")
+}
+
 func protoTime(v any) string {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return str(v)
 	}
-	sec, _ := strconv.ParseInt(fmt.Sprint(m["seconds"]), 10, 64)
+	// JSON 数字解码后是 float64，直接 fmt.Sprint 会得到 1.794975942e+09，
+	// ParseInt 解析失败就退化成「—」，所以按类型分别取值。
+	var sec int64
+	switch t := m["seconds"].(type) {
+	case float64:
+		sec = int64(t)
+	case int64:
+		sec = t
+	case int:
+		sec = int64(t)
+	case string:
+		sec, _ = strconv.ParseInt(strings.TrimSpace(t), 10, 64)
+	default:
+		sec, _ = strconv.ParseInt(fmt.Sprint(t), 10, 64)
+	}
 	if sec <= 0 {
 		return "—"
 	}

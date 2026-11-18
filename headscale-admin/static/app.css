@@ -589,3 +589,7 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .node-speed .ok { color: var(--success); font-weight: 600; }
 .node-speed .accent { color: var(--accent); font-weight: 600; }
 .node-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .84rem; }
+
+/* 打码密钥（headscale 列表接口只返回脱敏值） */
+.key-note { font-size: .78rem; color: var(--text-tertiary); margin-left: 6px; }
+.key-text.muted { color: var(--text-tertiary); }

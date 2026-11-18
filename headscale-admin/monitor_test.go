@@ -319,3 +319,25 @@ func writeSpeedFile(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestProtoTimeFormatsNumbers(t *testing.T) {
+	// JSON 解码后的秒数是 float64，不能被科学计数法带偏。
+	if got := protoTime(map[string]any{"seconds": float64(1794975942)}); got != "2026-11-18 12:25" {
+		t.Fatalf("float64 seconds = %q", got)
+	}
+	if got := protoTime(map[string]any{"seconds": "1794975942"}); got != "2026-11-18 12:25" {
+		t.Fatalf("string seconds = %q", got)
+	}
+	if got := protoTime(map[string]any{"seconds": float64(0)}); got != "—" {
+		t.Fatalf("zero seconds = %q", got)
+	}
+}
+
+func TestMaskedKey(t *testing.T) {
+	if !maskedKey("hskey-auth-kOMPJmNkPSAZ-***") {
+		t.Fatal("masked key not detected")
+	}
+	if maskedKey("hskey-auth-fullkeyvalue123") {
+		t.Fatal("plain key reported as masked")
+	}
+}

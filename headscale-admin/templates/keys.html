@@ -56,12 +56,15 @@
     <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.key"}}</th><th>{{t .Lang "col.expires"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
     <tbody>{{range .Data.Preauth}}<tr>
       <td>{{field . "id"}}</td><td>{{userOf .}}</td>
-      <td class="key-cell">{{$k := field . "key"}}{{if $k}}
+      <td class="key-cell">{{$k := field . "key"}}{{if $k}}{{if masked $k}}
+        <code class="mono key-text muted">{{$k}}</code>
+        <span class="key-note">{{t $.Lang "join.keyMasked"}}</span>
+      {{else}}
         <code class="mono key-text" data-key="{{$k}}">••••••••••••</code>
         <button type="button" class="btn btn-sm btn-ghost icon-btn key-reveal" title="{{t $.Lang "join.showKey"}}">{{icon "eye" 14}}</button>
         <button type="button" class="btn btn-sm btn-ghost icon-btn key-copy" title="{{t $.Lang "join.copyKey"}}">{{icon "copy" 14}}</button>
         <button type="button" class="btn btn-sm btn-ghost key-use">{{t $.Lang "join.useKey"}}</button>
-      {{else}}<span class="muted">—</span>{{end}}</td>
+      {{end}}{{else}}<span class="muted">—</span>{{end}}</td>
       <td class="muted small">{{tf (index . "expiration")}}</td>
       <td class="ops">
         <form method="post" action="/keys/preauth/expire" onsubmit="return confirm('{{t $.Lang "confirm.expireKey"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>

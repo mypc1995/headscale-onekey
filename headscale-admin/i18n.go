@@ -177,6 +177,7 @@ var dict = map[string][2]string{
 	"join.showKey":    {"显示密钥", "Show key"},
 	"join.hideKey":    {"隐藏密钥", "Hide key"},
 	"join.useKey":     {"填入命令", "Use in command"},
+	"join.keyMasked":  {"仅创建时可见完整值", "Full value shown only at creation"},
 	"join.incomplete": {"地址和密钥都准备好后，命令会自动补全并可一键复制。", "The command completes itself once both the address and a key are ready."},
 
 	// 网络与策略 / network
