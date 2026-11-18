@@ -1,0 +1,232 @@
+# headscale-onekey
+
+[简体中文](README.md) | **English**
+
+One-click deployment of a private [Headscale](https://github.com/juanfont/headscale) control server, bundled with a self-built full-featured admin UI, Headscale Admin (a single Go binary with Chinese/English UI, multiple color themes, live bandwidth charts, and web-based configuration management).
+
+Targets Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora, on x86_64 and aarch64. Verified on WSL Ubuntu and AlmaLinux 9. The scripts currently follow the Headscale v0.29.7 configuration format.
+
+## Features
+
+- Downloads the official binary, creates the system user and directories, generates a systemd unit, and configures the firewall.
+- Three access modes:
+  - `http://`: plain HTTP for internal networks; the listen port is derived from the URL.
+  - `https://` + `--tls-mode acme`: Headscale's built-in ACME, with automatic certificate issuance and renewal.
+  - `https://` + `--tls-mode certbot`: external certificates with a systemd timer for renewal, restarting the service after each renewal.
+- Automatically derives a MagicDNS `base_domain` to avoid conflicts with the `server_url` domain.
+- Built-in `configtest` self-check that aborts on failure; fixes data directory ownership on success.
+- Creates a default user and a 24-hour pre-auth key automatically.
+- Deploys the Headscale Admin UI: one-click Chinese/English switching, 14 color themes, live NIC traffic charts, a full account and permission system, and web-based domain/IP/SSL certificate management.
+
+## Repository layout
+
+| File | Description |
+| --- | --- |
+| `deploy-headscale.sh` | One-click Headscale deployment |
+| `deploy-headscale-admin.sh` | One-click deployment of the full admin UI (port 3001 by default) |
+| `headscale-admin/` | Go source, templates, and static assets of the admin UI |
+| `remove-headcontrol.sh` | Cleans up HeadControl (port 3000) when upgrading from older versions |
+| `test-headscale-cli.sh` | Read-only sandbox checks for Headscale CLI and config keys |
+| `test-headscale-admin.sh` | Admin UI checks: build, login, i18n, themes, bandwidth, config validation, and CSRF |
+
+## Quick start
+
+Clone the repository and enter the directory:
+
+```bash
+git clone https://github.com/mypc1995/headscale-onekey.git
+cd headscale-onekey
+```
+
+### 1. Deploy Headscale
+
+Internal HTTP mode:
+
+```bash
+sudo bash deploy-headscale.sh -u http://192.168.1.10:18080
+```
+
+Public HTTPS mode with built-in ACME:
+
+```bash
+sudo bash deploy-headscale.sh -u https://hs.example.com -e admin@example.com --derp
+```
+
+Public HTTPS mode with certbot:
+
+```bash
+sudo bash deploy-headscale.sh -u https://hs.example.com \
+  --tls-mode certbot -e admin@example.com --derp
+```
+
+Main options:
+
+| Option | Description |
+| --- | --- |
+| `-u, --url URL` | Client-facing address; must start with `http://` or `https://` |
+| `-e, --email MAIL` | ACME registration email; required in certbot mode |
+| `--tls-mode MODE` | `acme` (HTTPS default), `certbot`, or `none` (HTTP default) |
+| `--base-domain DOM` | MagicDNS base domain; derived automatically by default, rarely needs to be set |
+| `--derp` | Enable the built-in DERP relay; recommended for public deployments |
+| `-v, --version VER` | Pin a Headscale version; defaults to `0.29.7` |
+
+After deployment, manage certificates with `headscale-cert status|renew|reload`. Note: in v0.29.x, SIGHUP only reloads ACLs, not TLS certificates; use `renew` or restart the service to pick up new certificates.
+
+### 2. Deploy the admin UI (Headscale Admin)
+
+A single Go binary with a Chinese/English UI, listening on port 3001 by default, with a built-in account system. No Node or Python required.
+
+```bash
+sudo bash deploy-headscale-admin.sh --port 3001
+```
+
+The first deployment generates a random admin password and prints it once; you can also set it explicitly:
+
+```bash
+sudo bash deploy-headscale-admin.sh --port 3001 \
+  --admin-user admin --admin-pass 'YourStrongPassword'
+```
+
+Redeploying keeps the existing password; add `--reset-admin` to reset it. Use `--allow-cidr` to restrict client sources and `--no-firewall` to leave firewall rules untouched.
+
+Feature coverage:
+
+- Overview: users, nodes, online nodes, routes, keys, service status, certificate expiry.
+- Nodes: list, rename, expire, delete, tags, route approval.
+- Users: create, rename, delete, with display name and email support.
+- Keys & access: generate/expire/delete pre-auth keys and API keys, plus a one-click client join command. Expiry is a dropdown: 1 hour, 24 hours, 7 days, 30 days, 90 days, 1 year, or permanent (100 years, effectively never expires).
+  - One-click join card: `server_url` is read from the current configuration (takes effect once the IP/domain is bound and saved), and newly generated pre-auth keys are filled in automatically. The page assembles `tailscale up --login-server=<server_url> --authkey=<key>` in real time with one-click copy. When the address or key is missing, the command shows a placeholder and the copy button is disabled, so you never copy a half-finished command.
+  - Keys are masked by default; click the eye icon to toggle visibility. Each key in the list can be copied individually or sent straight to the join card with "Fill into command". New keys are shown only once (held in a per-session one-time store and never returned again after refresh), and never appear in URLs or logs.
+- Network & policy: ACL policy editing, DNS/MagicDNS, DERP toggle, full config editing; every save is backed up and validated with `configtest` first.
+- Ops & monitoring: host CPU/memory/load/uptime (3-second sampling, 3-minute charts), node online state with handshake/version/expiry/routes (15-second sampling), threshold alerts, service status, version, certificate expiry, recent logs, service restart, and live bandwidth refreshed every 3 seconds (reads `/proc/net/dev`, with up/down rates, cumulative traffic, per-NIC details, and recent history; degrades to an unavailable notice on non-Linux systems).
+- Administrators: add/remove/edit admin accounts, roles (admin/readonly), password changes.
+- Configuration management: domain, ports and prefixes, HTTPS certificates, and automatic renewal are all managed on the web — see the next section.
+
+#### Configuration page (`/settings`)
+
+Common Headscale settings are consolidated into the web UI so you don't have to edit YAML by hand. The page has four independent sections, each saved separately. Fields use plain-language labels, with the original config key shown as a small tag beside each label for cross-referencing YAML and the official docs; the key names themselves are never changed.
+
+**Domain and access address**
+
+| Label | Config key | Validation |
+| --- | --- | --- |
+| Public access URL | `server_url` | Required; only `http://` / `https://`; no path, query, fragment, or trailing `/`; the scheme must match the certificate mode |
+| Device domain suffix | `dns.base_domain` | Required; at least two labels; cannot be a bare IP; must differ from the `server_url` domain |
+| Enable MagicDNS | `dns.magic_dns` | Toggle; devices can reach each other by name when enabled |
+
+**Ports and prefixes**
+
+| Label | Config key | Validation |
+| --- | --- | --- |
+| Client listen port | `listen_addr` | Required; `IP:port`, port 1–65535 |
+| Local management port | `grpc_listen_addr` | Required; same format |
+| Metrics port | `metrics_listen_addr` | Optional; same format |
+| Device IPv4 prefix | `prefixes.v4` | Required; CIDR within `100.64.0.0/10` |
+| Device IPv6 prefix | `prefixes.v6` | Optional; CIDR, prefix length no larger than /64 |
+
+Duplicate ports within the same form are rejected outright. A warning appears when the `server_url` port differs from the listen port, preventing lockouts when changing ports.
+
+**HTTPS certificates**
+
+Three modes; switching modes only writes the keys the current mode needs:
+
+- **Automatic (Let's Encrypt)**: certificate domain (required FQDN), expiry notification email (optional, must be valid if set), challenge type (HTTP-01 / TLS-ALPN-01), the temporary listen address used during validation, and the certificate cache directory.
+- **Paste an existing certificate**: both the certificate and private key are pasted as PEM text — no file upload and no server paths to fill in. On save, both blocks are parsed and verified as a pair with `tls.X509KeyPair`, then written to `/etc/headscale/certs/manual.crt` and `manual.key` (mode 0600, owned by `headscale`), and those two paths are stored in `tls_cert_path` / `tls_key_path`. If a certificate is already configured and you are not changing it, leave both fields empty to keep it; pasted content is never echoed back to the page.
+- **No HTTPS**: clears the ACME domain and certificate paths.
+
+The top of the page parses the current certificate and shows its source (automatic / manual), CN, issuer, validity window, days remaining, SANs, and whether the private key matches. A warning appears when expiry is within 30 days or the key does not match.
+
+**Automatic certificate renewal**
+
+- Built-in ACME: shown as renewed automatically by the headscale process; no extra cron job needed.
+- certbot: shows the `certbot.timer` enabled/running state, last/next run time, and certificate name; you can start/stop the timer, set the daily check time (written to `certbot.timer.d/override.conf` followed by `daemon-reload`), or renew immediately (runs `certbot renew` and restarts headscale).
+- When certbot is not installed, an install hint is shown instead of unusable buttons.
+
+**Save and apply flow**
+
+1. The server validates every field; on failure the form is redisplayed with the offending fields highlighted, and nothing is written.
+2. A candidate config is generated from the current YAML and written to `/etc/headscale/.config-candidate.yaml`.
+3. `headscale configtest -c` validates it; on failure the candidate is deleted and the full error is returned, leaving the live config untouched.
+4. The existing config is backed up to `config.yaml.bak.<timestamp>`, then atomically replaced.
+5. With "restart immediately after save" checked, `systemctl restart headscale` runs and the service is verified active and listening; on failure the backup is restored and the service restarted again.
+6. On success a banner shows the result and the backup filename.
+
+When pasting a certificate, the certificate files land on disk before the config is written; if the subsequent `configtest` or restart fails, the certificate files are rolled back together with the config.
+
+Changing the listen port or `server_url` briefly interrupts client connections; switching between HTTP and HTTPS requires matching changes on both sides, and the page warns when they are inconsistent.
+
+The UI supports Chinese/English switching: the globe icon in the header toggles the language, the choice is stored in a cookie, and the login page can be switched too. The theme dropdown offers 14 palettes (light, dark, cyberpunk, ocean, sunset, forest, midnight, dracula, nord, rose, coffee, terminal, soft, synthwave), persisted in the browser. The design uses a neo-brutalist style with warm backgrounds, thick borders, and hard shadows; all icons are inline with no external CDN dependencies.
+
+Authentication uses an independent account system: passwords are stored with salted PBKDF2-HMAC-SHA256 (120,000 iterations), sessions use HttpOnly cookies, every form carries a CSRF token, and the readonly role cannot submit changes.
+
+Admin accounts and sessions live in SQLite (`/var/lib/headscale-admin/headscale-admin.db`, mode 0600), so logins survive service restarts. On first startup, a legacy `admins.json` is migrated automatically and renamed to `admins.json.migrated`; existing passwords keep working. The SQLite driver is pure Go (`modernc.org/sqlite`), so no gcc or CGO is needed to build.
+
+The source lives in `headscale-admin/` and depends on no third-party project with an undeclared license.
+
+#### Ops & monitoring page (`/ops`)
+
+**Host resources**: reads `/proc/stat`, `/proc/meminfo`, `/proc/loadavg`, and `/proc/uptime` every 3 seconds, showing CPU usage, memory usage (used/total), system load (1/5/15 min), uptime, and 3-minute CPU/memory charts. CPU usage is derived from the cumulative tick delta between two samples and shows 0 on the first sample; memory usage is `MemTotal - MemAvailable`, falling back to `MemFree + Buffers + Cached` on older kernels without `MemAvailable`. On non-Linux systems without `/proc`, the page shows an unavailable notice without affecting anything else.
+
+**Node monitoring**: runs `headscale nodes list -o json` every 15 seconds in the background, caches the result, and shows total/online/offline/expired node counts plus each node's name, user, virtual IPs, online state, live speed (down/up), last handshake, client version, OS, key expiry, tags, and route counts. States are online, offline, or key-expired, with expiry taking precedence. When the CLI read fails, the last successful snapshot is kept and a banner notes that stale data is being shown. The table footer notes the update time and sampling interval.
+
+**Per-node live speed**: node-to-node traffic flows over WireGuard direct connections or DERP, never through the control server, and neither the headscale CLI nor its Prometheus metrics expose per-node traffic counters. The bandwidth data source is therefore optional: point the `HSA_NODE_SPEED_FILE` environment variable at a counter JSON file that a node-side agent periodically writes cumulative rx/tx byte counts into, and the server derives rates from the delta between two samples (the same idea as CPU tick deltas), displayed automatically as B/s, KB/s, or MB/s. The file is keyed by node ID or node name:
+
+```json
+{
+  "12": {"rx_bytes": 154600, "tx_bytes": 31220},
+  "laptop": {"rx_bytes": 1000, "tx_bytes": 500}
+}
+```
+
+When the variable is unset, the file is missing, or its content cannot be parsed, every node's speed column shows a `—` placeholder with a hover explanation, and all other monitoring data is unaffected. Counter resets (node or agent restarts) are treated as zero for that interval, never negative. Rates use the same KB/s-based units as the live bandwidth panel.
+
+Only control-plane metrics are available for nodes. Tailscale clients do not report host resources such as CPU and memory to headscale, so per-node CPU/memory is out of scope for this page; if you need it, deploy a collection agent on the nodes, push the data to a new endpoint, and wire it in using the extension points below.
+
+**Alerts**: seven built-in rules — headscale service not active, CPU over threshold, memory over threshold, 1-minute load above cores × multiplier, node offline, node key expired, and node sampling failure. Thresholds can be overridden with environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HSA_ALERT_CPU` | 85 | CPU usage percentage threshold |
+| `HSA_ALERT_MEM` | 90 | Memory usage percentage threshold |
+| `HSA_ALERT_LOAD` | 2 | 1-minute load ceiling = CPU cores × this multiplier |
+
+**API**: `GET /api/monitor` requires login and returns four sections — `host`, `nodes`, `alerts`, `thresholds`. The page polls it every 5 seconds; node data is served from the server's 15-second cache, so multiple open pages never hammer the CLI.
+
+**How to extend**:
+
+- New host metric: add a field to `HostSnapshot` in `hostmon.go`, populate it in `sample()` (e.g. read `/proc/mounts` for disk usage), add display text in `newHostView`, and add a meter to the frontend.
+- New node metric: pull the field from the CLI JSON in `nodeStatFromMap` in `nodemont.go` and add it to `NodeStat`, then add a column in both the template and `nodeRow` in `static/app.js`; for counter-style metrics that need delta conversion (like bandwidth), follow `nodeSpeedRates` and add a data source.
+- New alert rule: implement `func(alertInput, AlertThresholds) []MonitorAlert` in `alerts.go` and register it in the `alertRules` slice — no changes needed to the page or API output; add thresholds to `AlertThresholds` and read them from environment variables in `defaultAlertThresholds`.
+- Notification channels: `MonitorAlert`'s `Key` and `Level` are stable, so you can deduplicate by key after rule evaluation and push to email or a webhook.
+
+## Verification
+
+Read-only checks can run on any Linux (including WSL) without creating users, writing to `/etc`, or starting services:
+
+```bash
+bash test-headscale-cli.sh        # CLI commands, config keys, and configtest
+bash test-headscale-admin.sh      # Admin UI build, login, i18n, themes, bandwidth, host & node monitoring, config validation, CSRF (requires go/curl)
+(cd headscale-admin && go test ./...)   # Unit tests for parsing, node mapping, i18n rendering, and alert rules
+```
+
+## Security notes
+
+- The admin UI uses an independent account system: passwords are stored as salted PBKDF2 digests and sessions use HttpOnly cookies; over HTTP the traffic is still plaintext, so on public networks use HTTPS or restrict sources with `--allow-cidr`.
+- HTTP mode is plaintext; newer Tailscale clients may require `TS_ALLOW_HTTP_CONTROL_SERVER=1`.
+- HTTPS mode requires the domain to resolve to this host, with ports 80 (certificate validation) and 443 (service) reachable.
+- The built-in DERP relay requires UDP/3478 to be open.
+
+## Upgrading from older versions
+
+Earlier versions also deployed the community project HeadControl (port 3000). All management features are now covered by Headscale Admin, so there is no reason to keep two UIs:
+
+```bash
+sudo bash remove-headcontrol.sh          # stop the service, remove program/data, free port 3000, clean firewall rules
+sudo bash remove-headcontrol.sh --keep-data   # keep /var/lib/headcontrol
+```
+
+The script only removes HeadControl; it does not touch Headscale, Headscale Admin, or `/etc/headscale/config.yaml`. Older versions remain available in the git history.
+
+## License
+
+The scripts, documentation, and admin UI source in this repository are released under the [MIT License](LICENSE).

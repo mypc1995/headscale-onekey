@@ -1,5 +1,7 @@
 # headscale-onekey
 
+**简体中文** | [English](README_EN.md)
+
 一键部署私有 [Headscale](https://github.com/juanfont/headscale) 控制服务器，附带自研的全量管理界面 Headscale Admin（Go 单二进制，支持中英文、多套配色、实时网速与网页端配置管理）。
 
 面向 Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora，支持 x86_64 与 aarch64。已在 WSL Ubuntu 与 AlmaLinux 9 实机验证；当前脚本按 Headscale v0.29.7 的配置格式编写。
