@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -20,9 +21,11 @@ type keysData struct {
 	Preauth   []map[string]any
 	APIKeys   []map[string]any
 	Users     []HSUser
-	ServerURL string // 配置里的对外访问地址，自动填入接入命令
-	JoinKey   string // 刚创建的预授权密钥（仅显示一次）
-	JoinCmd   string // 拼接好的接入命令；缺地址或密钥时为空，前端显示占位提示
+	ServerURL string            // 配置里的对外访问地址，自动填入接入命令
+	JoinKey   string            // 刚创建的预授权密钥（仅显示一次）
+	JoinCmd   string            // 拼接好的接入命令；缺地址或密钥时为空，前端显示占位提示
+	Notes     map[string]string // 预授权密钥备注，键为密钥 ID 字符串
+	NewAPIKey string            // 刚创建的 API key（仅显示一次，醒目展示防丢失）
 }
 
 type networkData struct {
@@ -88,7 +91,7 @@ func (a *App) usersPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) keysPage(w http.ResponseWriter, r *http.Request) {
-	d := keysData{Preauth: []map[string]any{}, APIKeys: []map[string]any{}, Users: []HSUser{}}
+	d := keysData{Preauth: []map[string]any{}, APIKeys: []map[string]any{}, Users: []HSUser{}, Notes: map[string]string{}}
 	if v, err := a.hs.PreauthKeys(); err == nil {
 		d.Preauth = v
 	}
@@ -98,6 +101,18 @@ func (a *App) keysPage(w http.ResponseWriter, r *http.Request) {
 	if v, err := a.hs.Users(); err == nil {
 		d.Users = v
 	}
+	// 备注与密钥 ID 关联；密钥被删后备注一并清理。
+	notes := a.store.KeyNotes("preauth")
+	alive := map[int64]bool{}
+	for _, k := range d.Preauth {
+		if id := keyID(k["id"]); id > 0 {
+			alive[id] = true
+			if n := notes[id]; n != "" {
+				d.Notes[strconv.FormatInt(id, 10)] = n
+			}
+		}
+	}
+	a.store.PruneKeyNotes("preauth", alive)
 	// 对外访问地址以配置为准：绑定 IP/域名并保存后，这里自动带上。
 	if v, err := a.hs.ReadConfigText(); err == nil {
 		d.ServerURL = topValue(v, "server_url")
@@ -105,6 +120,8 @@ func (a *App) keysPage(w http.ResponseWriter, r *http.Request) {
 	// 刚生成的密钥只显示这一次，取出来就清掉。
 	d.JoinKey = a.joinKeys.Take(sessionFrom(r).Token)
 	d.JoinCmd = joinCommand(d.ServerURL, d.JoinKey)
+	// API key 同理：创建后只在下一次页面加载中完整展示。
+	d.NewAPIKey = a.apiKeys.Take(sessionFrom(r).Token)
 	a.render(w, r, "keys", d)
 }
 
@@ -289,13 +306,45 @@ func normalizeExpiry(v, fallback string) string {
 }
 
 func extractKey(out string) string {
+	raw := strings.TrimSpace(out)
+	// apikeys create 的输出是裸 JSON 字符串："hskey-api-..."
+	var s string
+	if err := json.Unmarshal([]byte(raw), &s); err == nil && s != "" {
+		return s
+	}
 	var m map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err == nil {
-		if k := str(m["key"]); k != "" {
-			return k
+	if err := json.Unmarshal([]byte(raw), &m); err == nil {
+		// 预授权密钥创建返回 {"key": ...}，API key 也可能返回 {"apiKey": ...}。
+		for _, name := range []string{"key", "apiKey", "api_key", "token"} {
+			if k := str(m[name]); k != "" {
+				return k
+			}
 		}
 	}
-	return strings.TrimSpace(out)
+	return raw
+}
+
+// keyID 从 JSON 值解析密钥 ID（protojson 里 int64 常序列化为字符串）。
+func keyID(v any) int64 {
+	switch t := v.(type) {
+	case float64:
+		return int64(t)
+	case int64:
+		return t
+	case string:
+		id, _ := strconv.ParseInt(strings.TrimSpace(t), 10, 64)
+		return id
+	}
+	return 0
+}
+
+// extractKeyID 从 preauthkeys create 的输出里取新密钥的 ID。
+func extractKeyID(out string) int64 {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &m); err == nil {
+		return keyID(m["id"])
+	}
+	return 0
 }
 
 func (a *App) preauthCreate(w http.ResponseWriter, r *http.Request) {
@@ -313,9 +362,36 @@ func (a *App) preauthCreate(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
 		return
 	}
+	// 创建时填的备注按新密钥 ID 存档，之后列表里可再修改。
+	if note := strings.TrimSpace(r.FormValue("note")); note != "" {
+		if id := extractKeyID(out); id > 0 {
+			_ = a.store.SetKeyNote("preauth", id, note)
+		}
+	}
 	// 密钥只显示一次：暂存到会话，重定向后的密钥页自动填入接入命令。
 	a.joinKeys.Set(sessionFrom(r).Token, extractKey(out))
 	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.preauthOnce"))
+}
+
+// preauthNote 保存单个预授权密钥的备注（空备注即清除）。
+func (a *App) preauthNote(w http.ResponseWriter, r *http.Request) {
+	if !a.mutate(w, r) {
+		return
+	}
+	id, err := formUint(r, "id")
+	if err != nil {
+		a.redirectWithFlash(w, r, "/keys", err.Error())
+		return
+	}
+	note := strings.TrimSpace(r.FormValue("note"))
+	if len([]rune(note)) > 100 {
+		note = string([]rune(note)[:100])
+	}
+	if err := a.store.SetKeyNote("preauth", int64(id), note); err != nil {
+		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.saveFail", err.Error()))
+		return
+	}
+	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.noteSaved"))
 }
 
 func (a *App) preauthExpire(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +415,13 @@ func (a *App) preauthDelete(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/keys", err.Error())
 		return
 	}
-	a.doAction(w, r, "/keys", func() (string, error) { return a.hs.Action("preauthkeys", "delete", "-i", str(id), "--force") })
+	a.doAction(w, r, "/keys", func() (string, error) {
+		out, err := a.hs.Action("preauthkeys", "delete", "-i", str(id), "--force")
+		if err == nil {
+			a.store.DeleteKeyNote("preauth", int64(id))
+		}
+		return out, err
+	})
 }
 
 func (a *App) apiKeyCreate(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +434,9 @@ func (a *App) apiKeyCreate(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.generateFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.apiOnce", extractKey(out)))
+	// API key 只在创建时返回完整值，暂存到会话，下一页醒目展示一次。
+	a.apiKeys.Set(sessionFrom(r).Token, extractKey(out))
+	a.redirectWithFlash(w, r, "/keys", tr(langFrom(r), "msg.apiOnce"))
 }
 
 func (a *App) apiKeyExpire(w http.ResponseWriter, r *http.Request) {

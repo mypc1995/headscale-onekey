@@ -212,30 +212,59 @@ func maskedKey(v any) bool {
 	return strings.Contains(fmt.Sprint(v), "***")
 }
 
-func protoTime(v any) string {
+// protoSeconds 从 protobuf JSON 时间对象（{"seconds": ..., "nanos": ...}）取秒数。
+// JSON 数字解码后是 float64，直接 fmt.Sprint 会得到 1.794975942e+09，
+// ParseInt 解析失败就退化成 0，所以按类型分别取值。
+func protoSeconds(v any) int64 {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return str(v)
+		return 0
 	}
-	// JSON 数字解码后是 float64，直接 fmt.Sprint 会得到 1.794975942e+09，
-	// ParseInt 解析失败就退化成「—」，所以按类型分别取值。
-	var sec int64
 	switch t := m["seconds"].(type) {
 	case float64:
-		sec = int64(t)
+		return int64(t)
 	case int64:
-		sec = t
+		return t
 	case int:
-		sec = int64(t)
+		return int64(t)
 	case string:
-		sec, _ = strconv.ParseInt(strings.TrimSpace(t), 10, 64)
+		sec, _ := strconv.ParseInt(strings.TrimSpace(t), 10, 64)
+		return sec
 	default:
-		sec, _ = strconv.ParseInt(fmt.Sprint(t), 10, 64)
+		sec, _ := strconv.ParseInt(fmt.Sprint(t), 10, 64)
+		return sec
 	}
-	if sec <= 0 {
-		return "—"
+}
+
+func protoTime(v any) string {
+	if m, ok := v.(map[string]any); !ok {
+		return str(v)
+	} else {
+		if sec := protoSeconds(m); sec > 0 {
+			return time.Unix(sec, 0).Format("2006-01-02 15:04")
+		}
 	}
-	return time.Unix(sec, 0).Format("2006-01-02 15:04")
+	return "—"
+}
+
+// keyExpired 判断预授权密钥是否已过期（expiration 早于当前时间）。
+func keyExpired(m map[string]any) bool {
+	if b, ok := m["expired"].(bool); ok && b {
+		return true
+	}
+	sec := protoSeconds(m["expiration"])
+	return sec > 0 && sec < time.Now().Unix()
+}
+
+// isTrue 兼容 JSON 里的布尔与字符串形式的 true。
+func isTrue(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return t == "true"
+	}
+	return false
 }
 
 func (c *HSClient) configBytes() ([]byte, error) {

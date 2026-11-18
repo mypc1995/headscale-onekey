@@ -484,3 +484,41 @@
 
   render();
 })();
+
+// API key 一次性展示卡片：复制按钮。
+(function () {
+  var btn = document.getElementById('api-once-copy');
+  var src = document.getElementById('api-once-key');
+  if (!btn || !src) return;
+  var label = document.getElementById('api-once-copy-label');
+  var original = label ? label.textContent : '';
+  var copied = document.documentElement.lang === 'en' ? 'Copied' : '已复制';
+  function done() {
+    btn.classList.add('copied');
+    if (label) label.textContent = copied;
+    setTimeout(function () {
+      btn.classList.remove('copied');
+      if (label) label.textContent = original;
+    }, 1600);
+  }
+  btn.addEventListener('click', function () {
+    var text = src.textContent.trim();
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
+    } else {
+      fallbackCopy(text);
+      done();
+    }
+  });
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+})();

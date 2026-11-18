@@ -593,3 +593,15 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 /* 打码密钥（headscale 列表接口只返回脱敏值） */
 .key-note { font-size: .78rem; color: var(--text-tertiary); margin-left: 6px; }
 .key-text.muted { color: var(--text-tertiary); }
+
+/* 密钥类型徽章与备注编辑 */
+.note-cell { min-width: 220px; }
+.note-form { display: flex; align-items: center; gap: 6px; }
+.note-input { min-width: 0; flex: 1; padding: 4px 8px; font-size: .85rem; }
+.note-form .btn { flex: none; padding: 4px 8px; }
+
+/* API key 一次性展示卡片 */
+.api-once { border-color: var(--warning); }
+.api-once .api-once-key { font-weight: 700; }
+#api-once-copy { flex: none; align-self: center; white-space: nowrap; }
+#api-once-copy.copied { color: var(--success); }

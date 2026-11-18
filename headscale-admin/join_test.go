@@ -69,3 +69,19 @@ func TestJoinKeyStoreIgnoresEmpty(t *testing.T) {
 		t.Fatalf("空密钥不应保存，取到 %q", got)
 	}
 }
+
+func TestExtractKeyVariants(t *testing.T) {
+	if got := extractKey(`{"key":"hskey-auth-abc"}`); got != "hskey-auth-abc" {
+		t.Fatalf("preauth key = %q", got)
+	}
+	if got := extractKey(`{"apiKey":"hskey-api-xyz"}`); got != "hskey-api-xyz" {
+		t.Fatalf("api key object = %q", got)
+	}
+	// apikeys create 实际输出是裸 JSON 字符串。
+	if got := extractKey(`"hskey-api-bare"`); got != "hskey-api-bare" {
+		t.Fatalf("bare json string = %q", got)
+	}
+	if got := extractKey(`plain-string-key`); got != "plain-string-key" {
+		t.Fatalf("plain = %q", got)
+	}
+}

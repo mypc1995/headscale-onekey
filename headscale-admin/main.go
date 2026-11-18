@@ -23,6 +23,7 @@ type App struct {
 	host       *HostMonitor
 	nodes      *NodeMonitor
 	joinKeys   *joinKeyStore
+	apiKeys    *joinKeyStore // 刚创建的 API key 一次性暂存，语义与预授权密钥一致
 	thresholds AlertThresholds
 	tmpl       *template.Template
 	port       string
@@ -91,13 +92,15 @@ func main() {
 	}
 
 	funcs := template.FuncMap{
-		"field":  fieldValue,
-		"tf":     protoTime,
-		"masked": maskedKey,
-		"userOf": userOf,
-		"join":   strings.Join,
-		"list":   joinAny,
-		"has":    strings.Contains,
+		"field":      fieldValue,
+		"tf":         protoTime,
+		"masked":     maskedKey,
+		"keyExpired": keyExpired,
+		"isTrue":     isTrue,
+		"userOf":     userOf,
+		"join":       strings.Join,
+		"list":       joinAny,
+		"has":        strings.Contains,
 		"short": func(s string, n int) string {
 			if len(s) > n {
 				return s[:n] + "…"
@@ -139,7 +142,7 @@ func main() {
 	hs := NewHSClient()
 	a := &App{
 		store: store, sessions: NewSessionManager(store.DB, *secureCookie), hs: hs, net: NewNetMonitor(),
-		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), joinKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
+		host: NewHostMonitor(), nodes: NewNodeMonitor(hs), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir,
 	}
 
@@ -374,6 +377,7 @@ func (a *App) registerActions(p *http.ServeMux) {
 	p.HandleFunc("POST /nodes/tag", a.nodeTag)
 	p.HandleFunc("POST /nodes/approve", a.nodeApprove)
 	p.HandleFunc("POST /keys/preauth/create", a.preauthCreate)
+	p.HandleFunc("POST /keys/preauth/note", a.preauthNote)
 	p.HandleFunc("POST /keys/preauth/expire", a.preauthExpire)
 	p.HandleFunc("POST /keys/preauth/delete", a.preauthDelete)
 	p.HandleFunc("POST /keys/api/create", a.apiKeyCreate)

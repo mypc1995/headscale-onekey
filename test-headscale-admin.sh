@@ -48,9 +48,12 @@ case "$*" in
   *"list-routes"*) echo '[]' ;;
   *"users list"*) echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
   *"nodes list"*) echo 'null' ;;
-  *"preauthkeys list"*) echo '[]' ;;
-  *"preauthkeys create"*) echo '{"key":"hskey-test-123"}' ;;
+  *"preauthkeys list"*) [ -s "$FAKE_STATE" ] && cat "$FAKE_STATE" || echo '[]' ;;
+  *"preauthkeys create"*)
+    echo '[{"id":5,"user":{"name":"default"},"key":"hskey-test-ab12-***","reusable":true,"expiration":{"seconds":1894975942,"nanos":0},"created_at":{"seconds":1794889542,"nanos":0}}]' > "$FAKE_STATE"
+    echo '{"id":"5","key":"hskey-test-123"}' ;;
   *"apikeys list"*) echo '[]' ;;
+  *"apikeys create"*) echo '"hsapi-test-456"' ;;
   *"version"*) echo 'headscale version v0.29.7' ;;
   *) echo '{}' ;;
 esac
@@ -85,7 +88,7 @@ policy:
 YAML
 
 PORT=$((39000 + RANDOM % 1000))
-HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" "$TMPDIR/hsa" \
+HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
   >"$TMPDIR/server.log" 2>&1 &
 SERVER_PID=$!
@@ -206,13 +209,36 @@ grep -q '尚未创建密钥' "$TMPDIR/keys.html" && ok "未创建密钥时有占
 grep -q 'id="join-copy" disabled' "$TMPDIR/keys.html" && ok "命令不完整时复制按钮禁用" || fail "复制按钮未禁用"
 if [[ "$(uname -s)" == "Linux" ]]; then
   KEY_CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/keys.html" | head -1 | sed 's/.*value="//;s/"//')"
-  [[ "$(curl -s -b "$JAR" -X POST "$BASE/keys/preauth/create" -d "csrf=${KEY_CSRF}&user_id=1&expiration=24h" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "创建预授权密钥成功" || fail "创建预授权密钥失败"
+  [[ "$(curl -s -b "$JAR" -X POST "$BASE/keys/preauth/create" -d "csrf=${KEY_CSRF}&user_id=1&expiration=24h&reusable=on&note=%E6%B5%8B%E8%AF%95%E6%9C%BA%E6%88%BF" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "创建预授权密钥成功" || fail "创建预授权密钥失败"
   curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys2.html"
   grep -q 'data-join-key="hskey-test-123"' "$TMPDIR/keys2.html" && ok "新密钥自动填入接入卡片" || fail "新密钥未自动填入"
   grep -q 'tailscale up --login-server=http://127.0.0.1:8080 --authkey=hskey-test-123' "$TMPDIR/keys2.html" && ok "接入命令自动拼接完成" || fail "接入命令未拼接"
   grep -q '自动填入上方' "$TMPDIR/keys2.html" && ok "生成提示指向接入卡片" || fail "生成提示未更新"
   curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys3.html"
   grep -q 'data-join-key=""' "$TMPDIR/keys3.html" && ok "密钥仅显示一次，刷新后不再带出" || fail "密钥被重复展示"
+
+  info "验证密钥类型标识与备注"
+  grep -q '>类型</th>' "$TMPDIR/keys2.html" && ok "列表包含类型列" || fail "缺少类型列"
+  grep -q '>备注</th>' "$TMPDIR/keys2.html" && ok "列表包含备注列" || fail "缺少备注列"
+  grep -q '可复用' "$TMPDIR/keys2.html" && ok "可复用标识正常" || fail "可复用标识缺失"
+  grep -q '未使用' "$TMPDIR/keys2.html" && ok "未使用标识正常" || fail "未使用标识缺失"
+  grep -q '测试机房' "$TMPDIR/keys2.html" && ok "创建时备注已保存并显示" || fail "创建时备注未显示"
+  grep -q 'hskey-test-ab12-\*\*\*' "$TMPDIR/keys2.html" && ok "打码密钥按原样展示" || fail "打码密钥展示异常"
+  grep -q '仅创建时可见完整值' "$TMPDIR/keys2.html" && ok "打码密钥有说明文案" || fail "打码密钥缺少说明"
+  NOTE_CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/keys2.html" | head -1 | sed 's/.*value="//;s/"//')"
+  [[ "$(curl -s -b "$JAR" -X POST "$BASE/keys/preauth/note" -d "csrf=${NOTE_CSRF}&id=5&note=%E5%8A%9E%E5%85%AC%E7%94%B5%E8%84%91" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "备注修改接口正常" || fail "备注修改接口失败"
+  curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys4.html"
+  grep -q '办公电脑' "$TMPDIR/keys4.html" && ok "修改后的备注已显示" || fail "修改后的备注未显示"
+  grep -q '测试机房' "$TMPDIR/keys4.html" && fail "旧备注未覆盖" || ok "旧备注已被覆盖"
+
+  info "验证 API key 一次性展示"
+  API_CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/keys4.html" | head -1 | sed 's/.*value="//;s/"//')"
+  [[ "$(curl -s -b "$JAR" -X POST "$BASE/keys/api/create" -d "csrf=${API_CSRF}&expiration=90d" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "创建 API key 成功" || fail "创建 API key 失败"
+  curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys5.html"
+  grep -q 'id="api-once-key">hsapi-test-456<' "$TMPDIR/keys5.html" && ok "新 API key 醒目展示完整值" || fail "新 API key 未展示完整值"
+  grep -q 'id="api-once-copy"' "$TMPDIR/keys5.html" && ok "API key 卡片带复制按钮" || fail "API key 卡片缺少复制按钮"
+  curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys6.html"
+  grep -q 'hsapi-test-456' "$TMPDIR/keys6.html" && fail "API key 被重复展示" || ok "API key 仅显示一次，刷新后消失"
 else
   info "非 Linux 环境无法执行 fake headscale，跳过密钥创建链路（由远程测试覆盖）"
 fi

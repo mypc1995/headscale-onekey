@@ -44,6 +44,7 @@
     <div class="form-group"><label class="form-label">{{t .Lang "label.user"}}<select class="form-input" name="user_id" required>{{range .Data.Users}}<option value="{{.ID}}">{{.Name}} (ID {{.ID}})</option>{{end}}</select></label></div>
     <div class="form-group"><label class="form-label">{{t .Lang "label.expiry"}}<select class="form-input" name="expiration">{{template "expiryOptions" (dict "Lang" $.Lang "Default" "24h")}}</select></label></div>
     <div class="form-group"><label class="form-label">{{t .Lang "label.tags"}}<input class="form-input" name="tags" placeholder="tag1,tag2"></label></div>
+    <div class="form-group"><label class="form-label">{{t .Lang "label.note"}}<input class="form-input" name="note" maxlength="100" placeholder="{{t .Lang "note.ph"}}"></label></div>
     <div class="form-group"><label class="check-label"><input class="form-checkbox" type="checkbox" name="reusable"> {{t .Lang "label.reusable"}}</label></div>
     <div class="form-group"><label class="check-label"><input class="form-checkbox" type="checkbox" name="ephemeral"> {{t .Lang "label.ephemeral"}}</label></div>
     <div class="form-group"><button class="btn btn-primary" type="submit">{{icon "bolt" 15}} {{t .Lang "action.generate"}}</button></div>
@@ -53,7 +54,7 @@
 <section class="card">
   <div class="card-head"><h2 class="card-title">{{icon "key" 18}} {{t .Lang "section.preauth"}}</h2><span class="badge info">{{len .Data.Preauth}}</span></div>
   {{if .Data.Preauth}}<div class="table-wrap"><table>
-    <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.key"}}</th><th>{{t .Lang "col.expires"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
+    <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.key"}}</th><th>{{t .Lang "col.type"}}</th><th>{{t .Lang "col.note"}}</th><th>{{t .Lang "col.expires"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
     <tbody>{{range .Data.Preauth}}<tr>
       <td>{{field . "id"}}</td><td>{{userOf .}}</td>
       <td class="key-cell">{{$k := field . "key"}}{{if $k}}{{if masked $k}}
@@ -65,6 +66,15 @@
         <button type="button" class="btn btn-sm btn-ghost icon-btn key-copy" title="{{t $.Lang "join.copyKey"}}">{{icon "copy" 14}}</button>
         <button type="button" class="btn btn-sm btn-ghost key-use">{{t $.Lang "join.useKey"}}</button>
       {{end}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td class="small">{{if keyExpired .}}<span class="badge danger">{{t $.Lang "keystat.expired"}}</span>{{else}}{{if isTrue (index . "reusable")}}<span class="badge info">{{t $.Lang "keytype.multi"}}</span>{{else}}<span class="badge muted">{{t $.Lang "keytype.single"}}</span>{{end}}
+        {{if isTrue (index . "used")}}<span class="badge warning">{{t $.Lang "keystat.used"}}</span>{{else}}<span class="badge success">{{t $.Lang "keystat.unused"}}</span>{{end}}{{end}}
+        {{if isTrue (index . "ephemeral")}}<span class="badge info">{{t $.Lang "keystat.ephem"}}</span>{{end}}</td>
+      <td class="note-cell">
+        <form method="post" action="/keys/preauth/note" class="note-form">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}">
+          <input class="form-input note-input" name="note" maxlength="100" value="{{index $.Data.Notes (field . "id")}}" placeholder="{{t $.Lang "note.ph"}}">
+          <button class="btn btn-sm btn-ghost" type="submit" title="{{t $.Lang "action.saveNote"}}">{{icon "check" 14}}</button>
+        </form>
+      </td>
       <td class="muted small">{{tf (index . "expiration")}}</td>
       <td class="ops">
         <form method="post" action="/keys/preauth/expire" onsubmit="return confirm('{{t $.Lang "confirm.expireKey"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>
@@ -82,6 +92,15 @@
     <div class="form-group"><button class="btn btn-primary" type="submit">{{icon "bolt" 15}} {{t .Lang "action.generate"}}</button></div>
   </form>
 </section>
+
+{{if .Data.NewAPIKey}}<section class="card api-once" id="api-once">
+  <div class="card-head"><h2 class="card-title">{{icon "shield" 18}} {{t .Lang "api.onceTitle"}}</h2><span class="badge warning">{{t .Lang "join.onceBadge"}}</span></div>
+  <p class="hint">{{t .Lang "api.onceHint"}}</p>
+  <div class="join-cmd-row">
+    <code class="mono join-cmd api-once-key" id="api-once-key">{{.Data.NewAPIKey}}</code>
+    <button type="button" class="btn btn-sm btn-primary" id="api-once-copy">{{icon "copy" 14}} <span id="api-once-copy-label">{{t .Lang "join.copyKey"}}</span></button>
+  </div>
+</section>{{end}}
 
 <section class="card">
   <div class="card-head"><h2 class="card-title">{{icon "shield" 18}} {{t .Lang "section.apiKeys"}}</h2><span class="badge info">{{len .Data.APIKeys}}</span></div>

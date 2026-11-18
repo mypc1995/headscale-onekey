@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +68,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS key_notes (
+  kind       TEXT NOT NULL,
+  key_id     INTEGER NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (kind, key_id)
+);
 `
 
 // OpenStore 打开（或创建）SQLite 数据库，并把旧的 admins.json 迁移进来。
@@ -480,6 +488,72 @@ func validCSRF(r *http.Request, s *Session) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.CSRF)) == 1
+}
+
+// ---- 密钥备注 ----
+// headscale 的预授权密钥没有备注字段，备注存在管理界面本地，按密钥 ID 关联。
+
+// SetKeyNote 设置或覆盖一条密钥备注；空备注等价于删除。
+func (s *AuthStore) SetKeyNote(kind string, id int64, note string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	note = strings.TrimSpace(note)
+	if note == "" {
+		_, err := s.DB.Exec(`DELETE FROM key_notes WHERE kind=? AND key_id=?`, kind, id)
+		return err
+	}
+	_, err := s.DB.Exec(`INSERT INTO key_notes (kind, key_id, note, updated_at) VALUES (?,?,?,?)
+		ON CONFLICT(kind, key_id) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at`,
+		kind, id, note, time.Now().Unix())
+	return err
+}
+
+// KeyNotes 返回某类密钥的全部备注，键为密钥 ID。
+func (s *AuthStore) KeyNotes(kind string) map[int64]string {
+	out := map[int64]string{}
+	rows, err := s.DB.Query(`SELECT key_id, note FROM key_notes WHERE kind=?`, kind)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var note string
+		if rows.Scan(&id, &note) == nil {
+			out[id] = note
+		}
+	}
+	return out
+}
+
+// DeleteKeyNote 删除单条备注。
+func (s *AuthStore) DeleteKeyNote(kind string, id int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.DB.Exec(`DELETE FROM key_notes WHERE kind=? AND key_id=?`, kind, id)
+}
+
+// PruneKeyNotes 清理已经不在 keep 列表里的备注（密钥被删后备注跟着清掉）。
+func (s *AuthStore) PruneKeyNotes(kind string, keep map[int64]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.DB.Query(`SELECT key_id FROM key_notes WHERE kind=?`, kind)
+	if err != nil {
+		return
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		if !keep[id] {
+			_, _ = s.DB.Exec(`DELETE FROM key_notes WHERE kind=? AND key_id=?`, kind, id)
+		}
+	}
 }
 
 // Ping 用于启动自检。
