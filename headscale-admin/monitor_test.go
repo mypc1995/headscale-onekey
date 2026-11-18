@@ -322,11 +322,14 @@ func writeSpeedFile(t *testing.T, path, content string) {
 
 func TestProtoTimeFormatsNumbers(t *testing.T) {
 	// JSON 解码后的秒数是 float64，不能被科学计数法带偏。
-	if got := protoTime(map[string]any{"seconds": float64(1794975942)}); got != "2026-11-18 12:25" {
-		t.Fatalf("float64 seconds = %q", got)
+	// 时间按本机时区渲染，期望值必须同样按时区推导，不能写死某个时区的字符串。
+	const sec = 1794975942
+	want := time.Unix(sec, 0).Format("2006-01-02 15:04")
+	if got := protoTime(map[string]any{"seconds": float64(sec)}); got != want {
+		t.Fatalf("float64 seconds = %q, want %q", got, want)
 	}
-	if got := protoTime(map[string]any{"seconds": "1794975942"}); got != "2026-11-18 12:25" {
-		t.Fatalf("string seconds = %q", got)
+	if got := protoTime(map[string]any{"seconds": "1794975942"}); got != want {
+		t.Fatalf("string seconds = %q, want %q", got, want)
 	}
 	if got := protoTime(map[string]any{"seconds": float64(0)}); got != "—" {
 		t.Fatalf("zero seconds = %q", got)
