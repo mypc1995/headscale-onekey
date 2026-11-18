@@ -729,7 +729,12 @@ func setNestedKey(content, block, key, value string) (string, error) {
 		// 同 setTopKey：字面量替换，别让 "$" 被当成模板展开。
 		inner = kr.ReplaceAllLiteralString(inner, line)
 	} else {
-		inner = line + "\n" + inner
+		// 新键追加到块末尾，而不是插到最前面：这样能保持块内原有键的相对顺序，
+		// IPv6 开关来回切换后配置可以字节级还原（否则 prefixes.v6 会被插到 v4 上面）。
+		if inner != "" && !strings.HasSuffix(inner, "\n") {
+			inner += "\n"
+		}
+		inner += line + "\n"
 	}
 	return content[:loc[4]] + inner + content[loc[5]:], nil
 }

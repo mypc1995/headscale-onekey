@@ -259,6 +259,8 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   curl -s -b "$JAR" -X POST "$BASE/settings/network" \
     -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&ipv6_enabled=on&prefix_v6=fd7a:115c:a1e0::/48" -o /dev/null
   grep -q '^  v6: fd7a:115c:a1e0::/48$' "$TMPDIR/config.yaml" && ok "打开开关后 prefixes.v6 已写入配置文件" || fail "打开开关后 prefixes.v6 未写入配置文件"
+  # 存一份快照，后面用来比对开关来回切换后配置能不能还原。
+  cp "$TMPDIR/config.yaml" "$TMPDIR/config.yaml.snapshot"
   # 关掉开关：配置里的 prefixes.v6 必须消失，而不是留着旧值继续分配 IPv6。
   curl -s -b "$JAR" -X POST "$BASE/settings/network" \
     -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&prefix_v6=" -o /dev/null
@@ -267,6 +269,26 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   # 页面回读：开关勾选状态要跟着配置文件走。
   curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings2.html"
   grep 'id="ipv6_enabled"' "$TMPDIR/settings2.html" | grep -q 'checked' && fail "关掉开关后页面仍显示已勾选" || ok "关掉开关后页面显示未勾选"
+  # 重新打开开关：v6 要写回，而且要追加到块末尾（不能插到 v4 上面）。
+  curl -s -b "$JAR" -X POST "$BASE/settings/network" \
+    -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&ipv6_enabled=on&prefix_v6=fd7a:115c:a1e0::/48" -o /dev/null
+  grep -q '^  v6: fd7a:115c:a1e0::/48$' "$TMPDIR/config.yaml" && ok "重新打开开关后 prefixes.v6 已写回配置" || fail "重新打开开关后 prefixes.v6 没写回"
+  # 键序必须稳定：v4 在 v6 前面。
+  # 注意不能只比对「开关前后两份文件」——两份都由同一段代码写出来，
+  # 顺序错得一样就永远「一致」。这里直接断行号。
+  v4line="$(grep -n '^  v4:' "$TMPDIR/config.yaml" | cut -d: -f1)"
+  v6line="$(grep -n '^  v6:' "$TMPDIR/config.yaml" | cut -d: -f1)"
+  if [[ -n "$v4line" && -n "$v6line" && "$v4line" -lt "$v6line" ]]; then
+    ok "prefixes.v4 仍在 v6 之前（键序稳定）"
+  else
+    fail "键序被打乱：v4 在第 ${v4line:-?} 行，v6 在第 ${v6line:-?} 行"
+  fi
+  if diff -q "$TMPDIR/config.yaml.snapshot" "$TMPDIR/config.yaml" >/dev/null 2>&1; then
+    ok "开关来回切换后配置字节级还原"
+  else
+    fail "开关来回切换后配置顺序变了"
+    diff "$TMPDIR/config.yaml.snapshot" "$TMPDIR/config.yaml" | sed 's/^/      /' || true
+  fi
 else
   info "非 Linux 环境无法执行 headscale configtest，跳过写入链路（由远程测试覆盖）"
 fi

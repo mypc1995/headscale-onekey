@@ -221,6 +221,44 @@ func TestBuildConfigIPv6Toggle(t *testing.T) {
 	if strings.Contains(next, "v6:") {
 		t.Fatalf("配置里还残留 v6 键:\n%s", next)
 	}
+
+	// 开关来回切换后配置应能字节级还原：新键要追加到块末尾，
+	// 否则 prefixes.v6 会被插到 v4 上面，配置顺序跟着开关来回抖。
+	//
+	// 注意：buildConfig 每次都重新读磁盘上的配置，所以这里必须先把「关掉」
+	// 的结果落盘，下一次「打开」才是真的在「没有 v6 的配置」上新增键。
+	if err := os.WriteFile(path, []byte(next), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p.PrefixV6 = "fd7a:115c:a1e0::/48"
+	again, err := c.buildConfig(p, "network")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != base {
+		t.Fatalf("开关来回切换后配置没能还原:\n got: %q\nwant: %q", again, base)
+	}
+}
+
+// TestSetNestedKeyAppendsAtEnd 验证块内新增的键追加到末尾，且不会粘到上一行。
+func TestSetNestedKeyAppendsAtEnd(t *testing.T) {
+	got, err := setNestedKey("prefixes:\n  v4: 100.64.0.0/10\n", "prefixes", "v6", "fd7a:115c:a1e0::/48")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "prefixes:\n  v4: 100.64.0.0/10\n  v6: fd7a:115c:a1e0::/48\n"
+	if got != want {
+		t.Fatalf("新键没有追加到块末尾:\n got: %q\nwant: %q", got, want)
+	}
+	// 块内最后一行没有换行时，新键也不能被粘到同一行。
+	got2, err := setNestedKey("prefixes:\n  v4: 100.64.0.0/10", "prefixes", "v6", "fd7a::/48")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := "prefixes:\n  v4: 100.64.0.0/10\n  v6: fd7a::/48\n"
+	if got2 != want2 {
+		t.Fatalf("块末行无换行时新键被粘连:\n got: %q\nwant: %q", got2, want2)
+	}
 }
 
 // TestDeleteNestedKey 验证删键只动目标键，不伤到块里的其它内容。

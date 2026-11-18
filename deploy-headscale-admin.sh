@@ -197,8 +197,13 @@ else
   warn "未检测到活动防火墙，请自行放行 TCP/${PORT}"
 fi
 
+# 健康检查：管理界面可能开在 HTTPS（数据目录下的 admin-tls.json），
+# 只探明文 HTTP 会在 HTTPS 部署下永远失败并误报，两种协议都要试。
 HEALTH="$(curl -s --max-time 3 "http://127.0.0.1:${PORT}/health" || true)"
-[[ "$HEALTH" == "ok" ]] || warn "本机健康检查未返回 ok，请检查 journalctl -u headscale-admin"
+if [[ "$HEALTH" != "ok" ]]; then
+  HEALTH="$(curl -sk --max-time 3 "https://127.0.0.1:${PORT}/health" || true)"
+fi
+[[ "$HEALTH" == "ok" ]] && log "健康检查通过" || warn "本机健康检查未返回 ok，请检查 journalctl -u headscale-admin"
 
 cat <<EOF
 
