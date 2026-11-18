@@ -130,7 +130,7 @@ CSRF="$(curl -s -b "$JAR" "$BASE/admins" | grep -o 'name="csrf" value="[^"]*"' |
 [[ ${#CSRF} -ge 32 ]] && ok "管理员页 CSRF 已下发" || fail "管理员页缺少 CSRF"
 # 短口令必须被拒（创建路径要和改密路径用同一套长度要求）。
 [[ "$(curl -s -b "$JAR" -X POST "$BASE/admins/create" -d "csrf=${CSRF}&username=weakpwd&password=short&role=readonly" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "创建管理员的短口令被拦下" || fail "短口令未被拦下"
-curl -s -b "$JAR" "$BASE/admins" | grep -q 'weakpwd' && fail "短口令账号仍被创建" || ok "短口令账号未被创建"
+curl -s -b "$JAR" "$BASE/admins" | grep -c 'weakpwd' >/dev/null && fail "短口令账号仍被创建" || ok "短口令账号未被创建"
 # 建一个只读账号并登录。
 curl -s -b "$JAR" -X POST "$BASE/admins/create" -d "csrf=${CSRF}&username=ro-user&password=readonly123&role=readonly" -o /dev/null
 RO_JAR="$TMPDIR/ro-cookies"
@@ -139,7 +139,7 @@ RO_JAR="$TMPDIR/ro-cookies"
 # 只读账号的写操作要被拦。
 RO_CSRF="$(curl -s -b "$RO_JAR" "$BASE/admins" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
 [[ "$(curl -s -b "$RO_JAR" -X POST "$BASE/admins/create" -d "csrf=${RO_CSRF}&username=ro-made&password=readonly123&role=admin" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "只读账号的写操作被拦下" || fail "只读账号的写操作未被拦下"
-curl -s -b "$RO_JAR" "$BASE/admins" | grep -q 'ro-made' && fail "只读账号仍然创建出了管理员" || ok "只读账号没有创建出管理员"
+curl -s -b "$RO_JAR" "$BASE/admins" | grep -c 'ro-made' >/dev/null && fail "只读账号仍然创建出了管理员" || ok "只读账号没有创建出管理员"
 # 只读账号必须能登出（登出只校验 CSRF，不该被角色判定挡住）。
 [[ "$(curl -s -b "$RO_JAR" -c "$RO_JAR" -X POST "$BASE/logout" -d "csrf=${RO_CSRF}" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "只读账号可以登出" || fail "只读账号无法登出"
 [[ "$(curl -s -b "$RO_JAR" -o /dev/null -w '%{http_code}' "$BASE/")" == "303" ]] && ok "登出后会话已失效" || fail "登出后会话仍然有效"
@@ -274,7 +274,7 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   grep -q '^  v4: 100.64.0.0/10$' "$TMPDIR/config.yaml" && ok "关掉 IPv6 没有损坏 IPv4 网段" || fail "关掉 IPv6 时 IPv4 网段被弄坏"
   # 页面回读：开关勾选状态要跟着配置文件走。
   curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings2.html"
-  grep 'id="ipv6_enabled"' "$TMPDIR/settings2.html" | grep -q 'checked' && fail "关掉开关后页面仍显示已勾选" || ok "关掉开关后页面显示未勾选"
+  grep 'id="ipv6_enabled"' "$TMPDIR/settings2.html" | grep -c 'checked' >/dev/null && fail "关掉开关后页面仍显示已勾选" || ok "关掉开关后页面显示未勾选"
   # 重新打开开关：v6 要写回，而且要落在 prefixes 块内。
   curl -s -b "$JAR" -X POST "$BASE/settings/network" \
     -d "csrf=${CSRF}&listen_addr=0.0.0.0:8080&grpc_listen_addr=127.0.0.1:50443&metrics_listen_addr=&prefix_v4=100.64.0.0/10&ipv6_enabled=on&prefix_v6=fd7a:115c:a1e0::/48" -o /dev/null
@@ -340,7 +340,7 @@ NCSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/network.html" | head -1 | 
 curl -s -b "$JAR" -X POST "$BASE/network/dns" \
   --data-urlencode "csrf=${NCSRF}" --data-urlencode "base_domain=hs.example.com" \
   --data-urlencode "ns=not-an-ip" --data-urlencode "search=" \
-  -o /dev/null -w '%{http_code}' | grep -q '303' && ok "DNS 表单提交已重定向" || fail "DNS 表单提交未重定向"
+  -o /dev/null -w '%{http_code}' | grep -c '303' >/dev/null && ok "DNS 表单提交已重定向" || fail "DNS 表单提交未重定向"
 curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n1.html"
 grep -q 'DNS 服务器格式不正确' "$TMPDIR/n1.html" && ok "非法 DNS 服务器被拦截并提示" || fail "非法 DNS 服务器未提示"
 # 同一条提示只能显示一次，刷新后应消失。
@@ -382,6 +382,13 @@ curl -s -b "$JAR" -X POST "$BASE/settings/admin-tls" \
   --data-urlencode "csrf=${CSRF}" --data-urlencode "enabled=on" --data-urlencode "source=reuse" \
   -o "$TMPDIR/t2.html"
 grep -q '没有手动证书可复用' "$TMPDIR/t2.html" && ok "无可复用证书时被拦截并提示" || fail "无可复用证书时未被拦截"
+# systemd 单元必须禁用启动限流：设置页保存 HTTPS 配置会触发 systemctl restart，
+# 连续保存几次撞上默认限流（10 秒 5 次）就会 start-limit-hit，服务起不来、管理界面被锁死。
+if [[ -f "$SCRIPT_DIR/deploy-headscale-admin.sh" ]]; then
+  grep -q 'StartLimitIntervalSec=0' "$SCRIPT_DIR/deploy-headscale-admin.sh" \
+    && ok "systemd 单元已禁用启动限流（start-limit-hit 不会锁死管理界面）" \
+    || fail "systemd 单元未禁用启动限流，连续保存 HTTPS 设置会导致服务起不来"
+fi
 
 info "验证客户端一键接入"
 curl -s -b "$JAR" "$BASE/keys" -o "$TMPDIR/keys.html"

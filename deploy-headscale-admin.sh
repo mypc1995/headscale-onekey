@@ -150,6 +150,11 @@ cat >"$SERVICE_FILE" <<EOF
 Description=Headscale Admin Console
 After=network-online.target headscale.service
 Wants=network-online.target
+# 禁用 systemd 启动限流（发行版默认 10 秒内 5 次）。
+# 设置页保存管理界面 HTTPS 配置会触发 systemctl restart，用户连续保存几次
+# 就会撞上限流变成 start-limit-hit：服务起不来，管理界面直接不可达，
+# 只能手动 systemctl reset-failed 才能恢复。这里按需重启的单元必须关掉限流。
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
