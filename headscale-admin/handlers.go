@@ -182,18 +182,66 @@ func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // speedEndpoint 返回节点侧上报接口的完整地址，供管理员分发给节点 agent。
-// 主机名取自当前请求的 Host；节点在 tailnet 内访问时，管理员应把地址里的
-// 主机名换成服务器的 tailnet IP，否则节点解析不到。
+// 节点在 tailnet 内访问时，管理员应把地址里的主机名换成服务器的 tailnet IP，
+// 否则节点解析不到。
 func (a *App) speedEndpoint(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil || loadAdminTLS(a.dataFile).Enabled {
 		scheme = "https"
 	}
-	host := r.Host
-	if host == "" {
-		host = "127.0.0.1:" + a.port
+	return scheme + "://" + a.trustedHost(r) + "/api/speed"
+}
+
+// trustedHost 决定上报地址里写哪个主机名。
+//
+// 请求里的 Host 头是客户端自己写的：伪造它就能让管理员复制到一个指向
+// 别处的上报地址（钓鱼），所以不能无条件照抄。这里只用两类来源——
+// 按地址直连（内网面板的常态）和配置里出现过的域名（运维自己在界面上
+// 填的对外地址）。两者都不是就退回本机地址，管理员按提示换成 tailnet IP。
+func (a *App) trustedHost(r *http.Request) string {
+	host := strings.TrimSpace(r.Host)
+	name := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		name = h
 	}
-	return scheme + "://" + host + "/api/speed"
+	name = strings.Trim(name, "[]")
+	if name == "" {
+		return "127.0.0.1:" + a.port
+	}
+	// 地址形式的 Host：按 IP 直连，不是别人塞进来的域名。
+	if net.ParseIP(name) != nil || strings.EqualFold(name, "localhost") {
+		return host
+	}
+	if a.hostInConfig(name) {
+		return host
+	}
+	return "127.0.0.1:" + a.port
+}
+
+// hostInConfig 判断主机名是否出现在 headscale 配置里（对外地址或 MagicDNS 根域）。
+func (a *App) hostInConfig(name string) bool {
+	if a.hs == nil {
+		return false
+	}
+	raw, err := a.hs.ReadConfigText()
+	if err != nil {
+		return false
+	}
+	candidates := []string{topValue(raw, "server_url"), nestedValue(raw, "dns", "base_domain")}
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		host := c
+		if u, err := url.Parse(c); err == nil && u.Host != "" {
+			host = u.Hostname()
+		}
+		if strings.EqualFold(host, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) adminsPage(w http.ResponseWriter, r *http.Request) {
@@ -713,6 +761,12 @@ func (a *App) adminCreate(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.adminRequired"))
 		return
 	}
+	// 创建路径要和改密路径用同一套口令长度要求，否则管理员能创建出
+	// 一个 1 位口令的账号，而改密时又不允许这么短。
+	if len(pass) < 8 {
+		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.newPassShort"))
+		return
+	}
 	if err := a.store.CreateAdmin(user, pass, role, langFrom(r)); err != nil {
 		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.createFail", err.Error()))
 		return
@@ -762,7 +816,11 @@ func (a *App) passwordChange(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.updateFail", err.Error()))
 		return
 	}
-	a.redirectWithFlash(w, r, "/admins", tr(langFrom(r), "msg.passChanged"))
+	// 改密会吊销该账号的全部会话（包含当前这个），所以不能再走 flash：
+	// 会话已经没了，提示消息发不出去。改成清 Cookie 后跳回登录页。
+	a.sessions.Delete(s.Token)
+	a.sessions.ClearCookie(w)
+	http.Redirect(w, r, "/login?passchanged=1", http.StatusSeeOther)
 }
 
 // netmonAPI 供运维页定时刷新实时网速。

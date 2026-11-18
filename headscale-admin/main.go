@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ type App struct {
 	tplDir     string
 	staticDir  string
 	speed      *speedReporter
+	login      *loginGuard
 }
 
 type Page struct {
@@ -51,10 +53,13 @@ func main() {
 	legacyJSON := flag.String("legacy-json", envDefault("HSA_LEGACY_JSON", "/var/lib/headscale-admin/admins.json"), "旧版管理员 JSON，首次启动时自动迁移")
 	tplDir := flag.String("templates", envDefault("HSA_TEMPLATES", "/opt/headscale-admin/templates"), "模板目录")
 	staticDir := flag.String("static", envDefault("HSA_STATIC", "/opt/headscale-admin/static"), "静态资源目录")
-	initAdmin := flag.String("init-admin", "", "初始化管理员，格式 用户名:密码")
-	resetAdmin := flag.String("reset-admin", "", "重置管理员密码，格式 用户名:密码")
-	adminUser := flag.String("admin-user", "admin", "初始管理员用户名")
-	adminPass := flag.String("admin-pass", "", "初始管理员密码（配合 -init-only 使用）")
+	// 初始/重置管理员的口令优先从环境变量读：命令行参数会出现在
+	// /proc/<pid>/cmdline 里，同机的任何用户都能看到；环境变量只有
+	// 同用户（以及 root）能读。命令行参数仍然保留，方便手工调试。
+	initAdmin := flag.String("init-admin", envDefault("HSA_INIT_ADMIN", ""), "初始化管理员，格式 用户名:密码（也可用环境变量 HSA_INIT_ADMIN，避免口令出现在进程参数里）")
+	resetAdmin := flag.String("reset-admin", envDefault("HSA_RESET_ADMIN", ""), "重置管理员密码，格式 用户名:密码（也可用环境变量 HSA_RESET_ADMIN）")
+	adminUser := flag.String("admin-user", envDefault("HSA_ADMIN_USER", "admin"), "初始管理员用户名")
+	adminPass := flag.String("admin-pass", envDefault("HSA_ADMIN_PASS", ""), "初始管理员密码（配合 -init-only 使用；也可用环境变量 HSA_ADMIN_PASS）")
 	secureCookie := flag.Bool("cookie-secure", os.Getenv("HSA_COOKIE_SECURE") == "1", "Cookie 增加 Secure 标记")
 	speedToken := flag.String("node-speed-token", envDefault("HSA_NODE_SPEED_TOKEN", ""), "节点网速上报令牌（节点侧 agent 调用 POST /api/speed 使用）")
 	speedTokenFile := flag.String("node-speed-token-file", envDefault("HSA_NODE_SPEED_TOKEN_FILE", ""), "节点网速上报令牌文件（优先于令牌本身，避免令牌出现在进程参数里）")
@@ -156,7 +161,7 @@ func main() {
 		store: store, sessions: NewSessionManager(store.DB, secure), hs: hs, net: NewNetMonitor(),
 		host: NewHostMonitor(), nodes: NewNodeMonitor(hs, reporter.data), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir, dataFile: *dbFile,
-		speed: reporter,
+		speed: reporter, login: newLoginGuard(),
 	}
 
 	mux := http.NewServeMux()
@@ -191,15 +196,26 @@ func main() {
 			tlsCfg.Enabled = false
 		}
 	}
+	// 必须显式设置超时：http.ListenAndServe 的默认 Server 一个超时都没有，
+	// 慢速连接（Slowloris）可以把连接数占满，拖垮整台机器。
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	if tlsCfg.Enabled {
 		log.Printf("Headscale Admin 监听 %s（HTTPS）", addr)
-		if err := http.ListenAndServeTLS(addr, tlsCfg.CertPath, tlsCfg.KeyPath, mux); err != nil {
+		if err := srv.ListenAndServeTLS(tlsCfg.CertPath, tlsCfg.KeyPath); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
 	log.Printf("Headscale Admin 监听 %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -316,10 +332,30 @@ func (a *App) setLanguage(w http.ResponseWriter, r *http.Request) {
 		Secure: a.sessions.secure, MaxAge: 365 * 24 * 3600,
 	})
 	next := r.URL.Query().Get("next")
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+	if !safeNext(next) {
 		next = "/login"
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// safeNext 判断跳转目标是不是站内地址。
+//
+// 只放行以单个 "/" 开头的路径。协议相对地址（"//evil.com"）会被浏览器
+// 当成外站，而 "/\evil.com" 里的反斜杠也会被浏览器归一化成斜杠，
+// 两者都能把用户骗到外站，所以都要挡掉；控制字符同样挡掉。
+func safeNext(next string) bool {
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return false
+	}
+	if strings.Contains(next, "\\") {
+		return false
+	}
+	for _, r := range next {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
@@ -329,8 +365,14 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	lang := langFrom(r)
+	data := map[string]any{"Error": "", "Lang": lang}
+	// 改密之后旧会话会被吊销，这里给一句说明，别让人以为是登录失败。
+	if r.URL.Query().Get("passchanged") == "1" {
+		data["Notice"] = tr(lang, "msg.passChangedRelogin")
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": "", "Lang": langFrom(r)})
+	_ = a.tmpl.ExecuteTemplate(w, "login", data)
 }
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
@@ -338,15 +380,46 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, tr(langFrom(r), "msg.operationFailed", err.Error()), http.StatusBadRequest)
 		return
 	}
-	admin, ok := a.store.Verify(r.FormValue("username"), r.FormValue("password"))
-	if !ok {
+	lang := langFrom(r)
+	user := strings.TrimSpace(r.FormValue("username"))
+	ip := clientIP(r)
+
+	// 先看惩罚：被锁定时直接拒绝，不再消耗一次 KDF；
+	// 只是延迟时先等一下，抬高爆破的时间成本。
+	wait, locked := a.login.penalty(user, ip)
+	if locked {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(langFrom(r), "login.error"), "Lang": langFrom(r)})
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(lang, "login.tooMany"), "Lang": lang})
 		return
 	}
+	if wait > 0 {
+		time.Sleep(wait)
+	}
+
+	admin, ok := a.store.Verify(user, r.FormValue("password"))
+	if !ok {
+		a.login.fail(user, ip)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(lang, "login.error"), "Lang": lang})
+		return
+	}
+	a.login.success(user, ip)
 	s := a.sessions.Create(admin.Username, admin.Role)
 	a.sessions.SetCookie(w, s)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// clientIP 取请求的来源地址。
+//
+// 只用 RemoteAddr，不认 X-Forwarded-For：那个头是请求方自己写的，
+// 认它等于让攻击者随手换个头就绕过 IP 维度的限速。
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 type dashboardData struct {
@@ -388,10 +461,14 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
-	if !a.mutate(w, r) {
+	// 登出只校验 CSRF，不做角色判定：只读账号也要能退出登录，
+	// 否则它只能靠清 Cookie 或等会话过期才能离开。
+	s := sessionFrom(r)
+	if !validCSRF(r, s) {
+		http.Error(w, tr(langFrom(r), "msg.csrfFailed"), http.StatusBadRequest)
 		return
 	}
-	a.sessions.Delete(sessionFrom(r).Token)
+	a.sessions.Delete(s.Token)
 	a.sessions.ClearCookie(w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

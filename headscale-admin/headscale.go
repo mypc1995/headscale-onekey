@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type HSUser struct {
@@ -42,6 +43,18 @@ func NewHSClient() *HSClient {
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+// safeText 把子进程输出转成合法的 UTF-8。
+//
+// 子进程的 stderr / stdout 是原始字节：中文 locale 下 headscale 输出的
+// GBK 字节序列不是合法 UTF-8，直接塞进网页会显示成「���」这样的乱码，
+// 而且页面本身也不再是合法的 UTF-8 文档。
+func safeText(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, "�")
+}
+
 func (c *HSClient) run(args ...string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -51,13 +64,13 @@ func (c *HSClient) run(args ...string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(ansiRE.ReplaceAllString(errBuf.String(), ""))
+		msg := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(errBuf.String(), "")))
 		if msg == "" {
 			msg = err.Error()
 		}
 		return "", errors.New(msg)
 	}
-	return strings.TrimSpace(ansiRE.ReplaceAllString(out.String(), "")), nil
+	return strings.TrimSpace(safeText(ansiRE.ReplaceAllString(out.String(), ""))), nil
 }
 
 func (c *HSClient) runJSON(args ...string) (any, error) {
@@ -183,7 +196,7 @@ func (c *HSClient) Version() string {
 	if err != nil {
 		return "未知"
 	}
-	lines := strings.Fields(strings.TrimSpace(ansiRE.ReplaceAllString(string(b), "")))
+	lines := strings.Fields(strings.TrimSpace(safeText(ansiRE.ReplaceAllString(string(b), ""))))
 	if len(lines) >= 3 {
 		return lines[2]
 	}
@@ -315,7 +328,7 @@ func replaceLine(content string, pattern string, replacement string, lang ...str
 	if !re.MatchString(content) {
 		return content, errors.New(tr(L, "hs.noConfigItem"))
 	}
-	return re.ReplaceAllString(content, replacement), nil
+	return re.ReplaceAllLiteralString(content, replacement), nil
 }
 
 func (c *HSClient) ReadConfigText() (string, error) {
@@ -427,9 +440,9 @@ func journal(n int) string {
 	cmd := exec.Command("journalctl", "-u", "headscale", "-n", strconv.Itoa(n), "--no-pager")
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(b)
+		return safeText(string(b))
 	}
-	return ansiRE.ReplaceAllString(string(b), "")
+	return safeText(ansiRE.ReplaceAllString(string(b), ""))
 }
 
 func certExpiry() string {

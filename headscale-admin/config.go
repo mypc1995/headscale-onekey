@@ -684,6 +684,11 @@ func yamlScalar(s string) string {
 	if s == "" {
 		return `""`
 	}
+	// 含换行或控制字符的值必须整体加引号。否则它会跳出当前所在的 YAML 块，
+	// 后面的行会被当成新的顶层键——这就是 YAML 结构注入。
+	if hasControlChar(s) {
+		return strconv.Quote(s)
+	}
 	if strings.ContainsAny(s, "#&*!|>'\"%@`") || strings.Contains(s, ": ") || strings.HasSuffix(s, ":") ||
 		strings.HasPrefix(s, "-") || strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ") {
 		return strconv.Quote(s)
@@ -691,10 +696,22 @@ func yamlScalar(s string) string {
 	return s
 }
 
+// hasControlChar 判断字符串里有没有换行或其它控制字符。
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 func setTopKey(content, key, value string) string {
 	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `:.*$`)
 	if re.MatchString(content) {
-		return re.ReplaceAllString(content, key+": "+value)
+		// 必须用字面量替换：ReplaceAllString 会把替换串当模板展开，
+		// 用户值里的 "$1"、"$name" 会被静默删掉，配置内容就这么丢了。
+		return re.ReplaceAllLiteralString(content, key+": "+value)
 	}
 	return key + ": " + value + "\n" + content
 }
@@ -709,7 +726,8 @@ func setNestedKey(content, block, key, value string) (string, error) {
 	line := "  " + key + ": " + value
 	kr := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:.*$`)
 	if kr.MatchString(inner) {
-		inner = kr.ReplaceAllString(inner, line)
+		// 同 setTopKey：字面量替换，别让 "$" 被当成模板展开。
+		inner = kr.ReplaceAllLiteralString(inner, line)
 	} else {
 		inner = line + "\n" + inner
 	}
@@ -773,7 +791,7 @@ func (c *HSClient) ApplyConfig(next string, restart bool, lang string) (string, 
 	defer os.Remove(candidate)
 
 	out, err := exec.Command(c.Bin, "configtest", "-c", candidate).CombinedOutput()
-	ctOut := strings.TrimSpace(ansiRE.ReplaceAllString(string(out), ""))
+	ctOut := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(string(out), "")))
 	if err != nil {
 		// configtest 会真实初始化，可能留下 root 属主的运行文件。
 		_ = exec.Command("chown", "-R", "headscale:headscale", "/var/lib/headscale").Run()

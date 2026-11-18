@@ -249,14 +249,28 @@ func (s *AuthStore) Verify(username, password string) (*Admin, bool) {
 		`SELECT password_hash, salt, iterations, role, created_at, disabled FROM admins WHERE username=?`,
 		username).Scan(&a.PasswordHash, &a.Salt, &a.Iterations, &a.Role, &created, &disabled)
 	if err != nil {
+		// 用户名不存在时也要付出一模一样的 KDF 代价：否则「查不到用户」
+		// 会秒回，「用户存在但口令错」要跑满 120000 轮，两条路径的耗时差
+		// 足以让攻击者远程枚举出哪些账号存在。
+		verifyPassword(dummyAdmin, password)
 		return nil, false
 	}
 	a.CreatedAt = time.Unix(created, 0)
 	a.Disabled = disabled != 0
-	if a.Disabled || !verifyPassword(a, password) {
+	// 即便账号被停用也要跑完 KDF，保持各条路径的耗时一致。
+	ok := verifyPassword(a, password)
+	if a.Disabled || !ok {
 		return nil, false
 	}
 	return &Admin{Username: a.Username, Role: a.Role, Disabled: a.Disabled}, true
+}
+
+// dummyAdmin 是「用户不存在」时用来跑等量 KDF 的假记录。
+// 它的哈希是随机值，永远匹配不上任何口令。
+var dummyAdmin = &Admin{
+	PasswordHash: "0000000000000000000000000000000000000000000000000000000000000000",
+	Salt:         "00000000000000000000000000000000",
+	Iterations:   pbkdf2Iterations,
 }
 
 func (s *AuthStore) List() []*Admin {
@@ -336,6 +350,9 @@ func (s *AuthStore) SetRole(username, role string, lang ...string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New(tr(L, "auth.userMissing"))
 	}
+	// 降权必须立刻生效：把该账号已登录的会话全部吊销，
+	// 否则它手里的旧会话还带着 admin 角色继续写，撤权形同虚设。
+	s.revokeSessions(username)
 	return nil
 }
 
@@ -354,7 +371,14 @@ func (s *AuthStore) ChangePassword(username, password string, lang ...string) er
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New(tr(L, "auth.userMissing"))
 	}
+	// 口令泄露后改密，旧会话必须一起失效，否则泄露的会话还能继续用。
+	s.revokeSessions(username)
 	return nil
+}
+
+// revokeSessions 吊销某个用户名的全部会话。
+func (s *AuthStore) revokeSessions(username string) {
+	_, _ = s.DB.Exec(`DELETE FROM sessions WHERE username=?`, username)
 }
 
 type Session struct {
@@ -404,9 +428,17 @@ func (m *SessionManager) Get(token string) (*Session, bool) {
 	}
 	s := &Session{}
 	var expires int64
+	var role string
+	var disabled int
+	// 角色与停用状态一律取 admins 表里的实时值，不读会话表里的登录时快照：
+	// 否则管理员把某个账号降为只读或停用之后，那个账号已经登录的会话
+	// 还握着旧角色继续写，改动看起来「没生效」，最长能拖到会话过期。
 	err := m.db.QueryRow(
-		`SELECT token, username, role, csrf, flash, expires_at FROM sessions WHERE token=?`, token).
-		Scan(&s.Token, &s.Username, &s.Role, &s.CSRF, &s.Flash, &expires)
+		`SELECT s.token, s.username, s.csrf, s.flash, s.expires_at,
+		        COALESCE(a.role,''), COALESCE(a.disabled,0)
+		 FROM sessions s LEFT JOIN admins a ON a.username = s.username
+		 WHERE s.token=?`, token).
+		Scan(&s.Token, &s.Username, &s.CSRF, &s.Flash, &expires, &role, &disabled)
 	if err != nil {
 		if v, ok := fallbackStore.Load(token); ok {
 			fs := v.(*Session)
@@ -422,6 +454,12 @@ func (m *SessionManager) Get(token string) (*Session, bool) {
 		m.Delete(token)
 		return nil, false
 	}
+	// 账号已被删除或停用：会话立即失效。
+	if role == "" || disabled != 0 {
+		m.Delete(token)
+		return nil, false
+	}
+	s.Role = role
 	return s, true
 }
 

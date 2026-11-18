@@ -115,15 +115,17 @@ chmod 700 "$DATA_DIR"
 command -v restorecon >/dev/null 2>&1 && restorecon -RF "$INSTALL_DIR" "$BIN" >/dev/null 2>&1 || true
 log "二进制与资源已就绪: $BIN, $INSTALL_DIR"
 
-INIT_ARGS=()
 if [[ "$PRESERVE_ADMIN" != "yes" ]]; then
+  # 口令走环境变量，不进命令行参数：argv 会出现在 /proc/<pid>/cmdline，
+  # 同机任何用户都能看到（/proc/<pid>/environ 只有同用户和 root 能读）。
   if [[ "$RESET_ADMIN" == "yes" ]]; then
-    INIT_ARGS+=(--reset-admin "${ADMIN_USER}:${ADMIN_PASS}")
+    INIT_ENV=HSA_RESET_ADMIN
   else
-    INIT_ARGS+=(--init-admin "${ADMIN_USER}:${ADMIN_PASS}")
+    INIT_ENV=HSA_INIT_ADMIN
   fi
   step "初始化管理员"
-  HSA_DATA_FILE="$DB_FILE" HSA_LEGACY_JSON="$LEGACY_JSON" "$BIN" --init-only "${INIT_ARGS[@]}" || error "管理员初始化失败"
+  env "${INIT_ENV}=${ADMIN_USER}:${ADMIN_PASS}" HSA_DATA_FILE="$DB_FILE" HSA_LEGACY_JSON="$LEGACY_JSON" \
+    "$BIN" --init-only || error "管理员初始化失败"
   chmod 600 "$DB_FILE" 2>/dev/null || true
   [[ -f "$DB_FILE-wal" ]] && chmod 600 "$DB_FILE-wal"
   [[ -f "$DB_FILE-shm" ]] && chmod 600 "$DB_FILE-shm"

@@ -102,6 +102,7 @@
   <div class="login-brand"><span class="sidebar-logo">HS</span><span>{{t .Lang "app.name"}}</span></div>
   <div class="login-sub">{{t .Lang "app.subtitle"}}</div>
   <h2 class="login-title">{{t .Lang "login.title"}}</h2>
+  {{if .Notice}}<div class="flash success">{{icon "check" 17}}<span>{{.Notice}}</span></div>{{end}}
   {{if .Error}}<div class="flash error">{{icon "x" 17}}<span>{{.Error}}</span></div>{{end}}
   <form method="post" action="/login">
     <div class="form-group"><label class="form-label" for="u">{{t .Lang "label.username"}}</label><input class="form-input" id="u" name="username" autocomplete="username" required autofocus></div>

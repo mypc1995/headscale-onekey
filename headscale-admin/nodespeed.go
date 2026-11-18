@@ -14,6 +14,7 @@ package main
 //     适合采集器与管理界面同机部署的场景。
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -181,6 +182,14 @@ func (r *speedReporter) handle(w http.ResponseWriter, req *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "请求体读取失败"})
 		return
 	}
+	// 令牌在请求头里时根本不用碰请求体；只有令牌可能藏在请求体里时，
+	// 才做一次廉价的子串扫描再决定要不要完整解析。
+	// 这样未认证的请求不会白白消耗一次 JSON 解析。
+	if !r.headerTokenOK(req) && !bytes.Contains(bytes.ToLower(body), []byte("token")) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "令牌无效"})
+		return
+	}
 	items, perr := parseSpeedPayload(body)
 	// 先鉴权再校验请求体：令牌不对时统一返回 401，不泄露请求体的解析细节。
 	if !r.authorized(req, items) {
@@ -212,30 +221,44 @@ func (r *speedReporter) handle(w http.ResponseWriter, req *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "accepted": accepted})
 }
 
-// authorized 校验上报令牌。令牌可以从 X-Node-Speed-Token 头、
-// Authorization: Bearer 头或请求体的 token 字段提供，方便不同语言的 agent 接入。
-func (r *speedReporter) authorized(req *http.Request, items []speedPayload) bool {
+// headerTokenOK 判断请求头里带的令牌是否正确。
+// 令牌可以放在 X-Node-Speed-Token 头或 Authorization: Bearer 头里。
+func (r *speedReporter) headerTokenOK(req *http.Request) bool {
 	r.mu.RLock()
 	want := r.token
 	r.mu.RUnlock()
 	if want == "" {
 		return false
 	}
-	var candidates []string
-	if v := strings.TrimSpace(req.Header.Get("X-Node-Speed-Token")); v != "" {
-		candidates = append(candidates, v)
-	}
+	candidates := []string{strings.TrimSpace(req.Header.Get("X-Node-Speed-Token"))}
 	if auth := strings.TrimSpace(req.Header.Get("Authorization")); len(auth) > 7 && strings.EqualFold(auth[:7], "bearer ") {
 		candidates = append(candidates, strings.TrimSpace(auth[7:]))
 	}
-	for _, it := range items {
-		if v := strings.TrimSpace(it.Token); v != "" {
-			candidates = append(candidates, v)
+	for _, c := range candidates {
+		if c != "" && subtle.ConstantTimeCompare([]byte(c), []byte(want)) == 1 {
+			return true
 		}
 	}
-	for _, c := range candidates {
-		if subtle.ConstantTimeCompare([]byte(c), []byte(want)) == 1 {
-			return true
+	return false
+}
+
+// authorized 校验上报令牌。令牌可以从 X-Node-Speed-Token 头、
+// Authorization: Bearer 头或请求体的 token 字段提供，方便不同语言的 agent 接入。
+func (r *speedReporter) authorized(req *http.Request, items []speedPayload) bool {
+	if r.headerTokenOK(req) {
+		return true
+	}
+	r.mu.RLock()
+	want := r.token
+	r.mu.RUnlock()
+	if want == "" {
+		return false
+	}
+	for _, it := range items {
+		if v := strings.TrimSpace(it.Token); v != "" {
+			if subtle.ConstantTimeCompare([]byte(v), []byte(want)) == 1 {
+				return true
+			}
 		}
 	}
 	return false

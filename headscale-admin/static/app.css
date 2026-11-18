@@ -441,6 +441,7 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 }
 .flash svg { width: 17px; height: 17px; margin-top: 1px; }
 .flash.error { background: var(--danger-bg); color: var(--danger); }
+.flash.success { background: var(--success-bg); color: var(--success); }
 .logs {
   margin: 0; padding: 13px; background: var(--bg-primary); border: var(--border-width) solid var(--border);
   border-radius: var(--radius-md); max-height: 400px; overflow: auto; font: .72rem/1.6 "JetBrains Mono", ui-monospace, Consolas, monospace;

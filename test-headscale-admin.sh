@@ -106,6 +106,46 @@ info "验证登录与访问控制"
 curl -s -X POST "$BASE/login" -d 'username=admin&password=wrong' | grep -c '用户名或密码错误' >/dev/null && ok "错误密码被拒绝" || fail "错误密码未被拒绝"
 [[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "正确凭据登录成功" || fail "登录失败"
 
+info "验证跳转目标与登录限速"
+# 语言切换的跳转目标必须是站内地址：/\evil.com 会被浏览器归一化成 //evil.com。
+loc="$(curl -s -o /dev/null -w '%{redirect_url}' "$BASE/lang?lang=zh&next=/%5Cevil.com")"
+case "$loc" in
+  *evil.com*) fail "语言切换存在开放重定向: $loc" ;;
+  *) ok "语言切换的跳转目标已校验" ;;
+esac
+# 连续失败要被计数，但正确口令仍然能登录（账号维度只加延迟，不做永久锁定）。
+for _ in 1 2 3; do
+  curl -s -o /dev/null -X POST "$BASE/login" -d 'username=bogus-user&password=wrong'
+done
+[[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "失败尝试后正确口令仍可登录" || fail "失败尝试后无法登录"
+
+info "验证只读账号与撤权生效"
+CSRF="$(curl -s -b "$JAR" "$BASE/admins" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+[[ ${#CSRF} -ge 32 ]] && ok "管理员页 CSRF 已下发" || fail "管理员页缺少 CSRF"
+# 短口令必须被拒（创建路径要和改密路径用同一套长度要求）。
+[[ "$(curl -s -b "$JAR" -X POST "$BASE/admins/create" -d "csrf=${CSRF}&username=weakpwd&password=short&role=readonly" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "创建管理员的短口令被拦下" || fail "短口令未被拦下"
+curl -s -b "$JAR" "$BASE/admins" | grep -q 'weakpwd' && fail "短口令账号仍被创建" || ok "短口令账号未被创建"
+# 建一个只读账号并登录。
+curl -s -b "$JAR" -X POST "$BASE/admins/create" -d "csrf=${CSRF}&username=ro-user&password=readonly123&role=readonly" -o /dev/null
+RO_JAR="$TMPDIR/ro-cookies"
+[[ "$(curl -s -c "$RO_JAR" -X POST "$BASE/login" -d 'username=ro-user&password=readonly123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "只读账号登录成功" || fail "只读账号登录失败"
+[[ "$(curl -s -b "$RO_JAR" -o /dev/null -w '%{http_code}' "$BASE/admins")" == "200" ]] && ok "只读账号可以访问管理页" || fail "只读账号无法访问管理页"
+# 只读账号的写操作要被拦。
+RO_CSRF="$(curl -s -b "$RO_JAR" "$BASE/admins" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+[[ "$(curl -s -b "$RO_JAR" -X POST "$BASE/admins/create" -d "csrf=${RO_CSRF}&username=ro-made&password=readonly123&role=admin" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "只读账号的写操作被拦下" || fail "只读账号的写操作未被拦下"
+curl -s -b "$RO_JAR" "$BASE/admins" | grep -q 'ro-made' && fail "只读账号仍然创建出了管理员" || ok "只读账号没有创建出管理员"
+# 只读账号必须能登出（登出只校验 CSRF，不该被角色判定挡住）。
+[[ "$(curl -s -b "$RO_JAR" -c "$RO_JAR" -X POST "$BASE/logout" -d "csrf=${RO_CSRF}" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "只读账号可以登出" || fail "只读账号无法登出"
+[[ "$(curl -s -b "$RO_JAR" -o /dev/null -w '%{http_code}' "$BASE/")" == "303" ]] && ok "登出后会话已失效" || fail "登出后会话仍然有效"
+# 降权必须立刻生效：被降为只读的账号，手里的旧会话不能再写。
+curl -s -b "$JAR" -X POST "$BASE/admins/create" -d "csrf=${CSRF}&username=demote-user&password=demote123&role=admin" -o /dev/null
+DEMOTE_JAR="$TMPDIR/demote-cookies"
+curl -s -c "$DEMOTE_JAR" -X POST "$BASE/login" -d 'username=demote-user&password=demote123' -o /dev/null
+DEMOTE_CSRF="$(curl -s -b "$DEMOTE_JAR" "$BASE/admins" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+[[ "$(curl -s -b "$DEMOTE_JAR" -X POST "$BASE/admins/create" -d "csrf=${DEMOTE_CSRF}&username=before-demote&password=demote123&role=readonly" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "降权前该账号是管理员" || fail "降权前该账号无法写入"
+curl -s -b "$JAR" -X POST "$BASE/admins/role" -d "csrf=${CSRF}&username=demote-user&role=readonly" -o /dev/null
+[[ "$(curl -s -b "$DEMOTE_JAR" -o /dev/null -w '%{http_code}' "$BASE/")" == "303" ]] && ok "降权后旧会话立即失效" || fail "降权后旧会话仍然有效"
+
 info "验证中文页面与新 UI"
 for p in / /nodes /users /keys /network /settings /ops /admins; do
   code="$(curl -s -b "$JAR" -o "$TMPDIR/page.html" -w '%{http_code}' "$BASE$p")"
