@@ -263,10 +263,13 @@ MIIB
 grep -q '成对粘贴' "$TMPDIR/e5.html" && ok "证书私钥缺一被拦截" || fail "缺一项未被拦截"
 
 if [[ "$(uname -s)" == "Linux" ]]; then
+  # 表单里带 magic_dns=on：设置页的 MagicDNS 复选框默认是勾上的，浏览器提交时
+  # 一定会带上这个字段。漏传等于模拟"用户偷偷取消了勾选"，会把开关写成 false。
   code="$(curl -s -b "$JAR" -X POST "$BASE/settings/domain" \
-    -d "csrf=${CSRF}&server_url=http://127.0.0.1:8080&base_domain=hs.example.com&apply_now=" -o /dev/null -w '%{http_code}')"
+    -d "csrf=${CSRF}&server_url=http://127.0.0.1:8080&base_domain=hs.example.com&magic_dns=on&apply_now=" -o /dev/null -w '%{http_code}')"
   [[ "$code" == "303" ]] && ok "合法域名配置保存成功" || fail "合法配置保存失败 (${code})"
   grep -q '^server_url: http://127.0.0.1:8080' "$TMPDIR/config.yaml" && ok "配置已写入文件" || fail "配置未写入"
+  grep -q '^  magic_dns: true$' "$TMPDIR/config.yaml" && ok "保存域名后 MagicDNS 开关保持开启" || fail "保存域名后 MagicDNS 开关被意外关闭"
   ls "$TMPDIR"/config.yaml.bak.* >/dev/null 2>&1 && ok "原配置已备份" || fail "未生成备份"
 
   info "验证 IPv6 开关真的作用到配置文件"
@@ -380,19 +383,35 @@ info "验证整份配置覆盖保存（模拟浏览器 textarea 的 CRLF 提交�
 # headscale 自己的 YAML 解析器能接受 CRLF，但本项目的行解析器（blockBody 要求
 # 块头后面紧跟 \n）认不出来，于是 dns 块里的值全被读成空：页面上域名是空的、
 # 开关是未勾选的，用户再点一次「保存 DNS」，空值就被写回配置。
-# 生产上已经中招：/etc/headscale/config.yaml 里有 311 个 CR 字节。
+# 覆盖前先记下 dns.magic_dns 的真值：断言要对着实际状态比对，不能写死「应已勾选」。
+# 浏览器在复选框勾选时提交 magic_dns=on、不勾选时根本不提交这个字段，所以「保存域名」
+# 这类请求会把开关真实地写成 false —— 那之后正确的表现就是「未勾选」。
+PRE_MAGIC="$(grep -m1 -E '^[[:space:]]*magic_dns:' "$TMPDIR/config.yaml" | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r')"
+PRE_MAGIC="${PRE_MAGIC:-false}"
 CRLF_CONFIG="$(sed 's/$/\r/' "$TMPDIR/config.yaml")"
 curl -s -b "$JAR" -X POST "$BASE/network/config" \
   --data-urlencode "csrf=${NCSRF}" --data-urlencode "config=${CRLF_CONFIG}" -o /dev/null
-if grep -q $'\r' "$TMPDIR/config.yaml"; then
-  fail "CRLF 提交后配置文件里仍有 CR 字节（配置被写成了 CRLF）"
+# 用 tr 数 CR 字节，不能用 grep：这个环境的 grep 压根不认 \r（实测在已知 CRLF
+# 文件上返回 0），拿 grep 判定「有没有 CR」会永远得到「没有」——断言假绿。
+CR_BYTES="$(tr -cd '\r' < "$TMPDIR/config.yaml" | wc -c | tr -d ' ')"
+if [[ "${CR_BYTES}" != "0" ]]; then
+  fail "CRLF 提交后配置文件里仍有 ${CR_BYTES} 个 CR 字节（配置被写成了 CRLF）"
 else
   ok "CRLF 提交后配置文件已归一化为 LF"
 fi
 # 页面回读：dns 块的值必须还在。CRLF 被原样落盘时这里会读成空。
 curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n6.html"
 grep -q 'name="base_domain" value="hs.example.com"' "$TMPDIR/n6.html" && ok "覆盖保存后域名仍能读回" || fail "覆盖保存后域名读不回来了"
-grep 'name="magic_dns"' "$TMPDIR/n6.html" | grep -c 'checked' >/dev/null && ok "覆盖保存后 MagicDNS 开关仍显示已勾选" || fail "覆盖保存后 MagicDNS 开关状态丢失"
+if grep 'name="magic_dns"' "$TMPDIR/n6.html" | grep -c 'checked' >/dev/null; then
+  SHOWN_MAGIC="true"
+else
+  SHOWN_MAGIC="false"
+fi
+if [[ "$SHOWN_MAGIC" == "$PRE_MAGIC" ]]; then
+  ok "覆盖保存后 MagicDNS 开关状态与配置一致（${PRE_MAGIC}）"
+else
+  fail "覆盖保存后 MagicDNS 开关状态与配置不一致：配置是 ${PRE_MAGIC}，页面显示 ${SHOWN_MAGIC}"
+fi
 
 info "验证管理界面 HTTPS 卡片"
 for kw in '管理界面 HTTPS' 'id="admin-tls-enabled"' 'id="admin-tls-body"' 'name="admin_cert_pem"' 'name="admin_key_pem"'; do
@@ -563,8 +582,11 @@ echo
 echo "=========================================="
 if [[ $FAILS -eq 0 ]]; then
   ok "全部检查通过"
-else
-  fail "有 $FAILS 项失败"
+  echo "=========================================="
+  exit 0
 fi
+# 这里不能调用 fail()：它会把 FAILS 再加一，导致退出码变成「失败数 + 1」
+# （实测 1 项失败返回 2、3 项失败返回 4），退出码就不能直接当失败数用了。
+printf '%s[FAIL]%s 有 %d 项失败\n' "$C_RED" "$C_RESET" "$FAILS"
 echo "=========================================="
 exit $FAILS
