@@ -281,10 +281,35 @@ func isTrue(v any) bool {
 }
 
 func (c *HSClient) configBytes() ([]byte, error) {
-	return os.ReadFile(c.Config)
+	b, err := os.ReadFile(c.Config)
+	if err != nil {
+		return nil, err
+	}
+	// 读进来就归一化行尾：后续所有派生内容（页面读取、写回、备份对比）
+	// 都基于它，历史上被写成 CRLF 的配置也会在这里自愈回 LF。
+	return []byte(normalizeEOL(string(b))), nil
+}
+
+// normalizeEOL 把 CRLF / CR 统一成 LF。
+//
+// 浏览器的 textarea 提交时按 HTML 规范把换行规范化成 CRLF，服务端原样落盘，
+// 配置文件就成了 CRLF。headscale 自己的 YAML 解析器能接受 CRLF，但本项目的
+// 行解析器认不出来：blockBody 要求块头后面紧跟 \n，"dns:\r\n" 匹配不上，
+// 于是 dns / derp 块里的值全被读成空——页面上域名是空的、开关是未勾选的，
+// 用户再点一次保存，空值就被写回配置。
+//
+// 所以读进来先归一化（顺带把历史上被写成 CRLF 的配置自愈回 LF），
+// 写出去之前也归一化（浏览器提交的内容不带这层保护）。
+func normalizeEOL(s string) string {
+	if !strings.ContainsRune(s, '\r') {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
 }
 
 func topValue(content string, key string) string {
+	content = normalizeEOL(content)
 	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `:\s*(.*)$`)
 	m := re.FindStringSubmatch(content)
 	if len(m) < 2 {
@@ -294,6 +319,7 @@ func topValue(content string, key string) string {
 }
 
 func nestedValue(content string, block string, key string) string {
+	content = normalizeEOL(content)
 	inner, ok := blockBody(content, block)
 	if !ok {
 		return ""
@@ -320,6 +346,7 @@ func blockBody(content string, block string) (string, bool) {
 }
 
 func deepValue(content string, block string, key string) string {
+	content = normalizeEOL(content)
 	inner, ok := blockBody(content, block)
 	if !ok {
 		return ""
@@ -376,6 +403,9 @@ func (c *HSClient) SaveConfig(content string) error {
 	if err != nil {
 		return err
 	}
+	// 浏览器 textarea 提交上来的换行是 CRLF，原样落盘会把配置写成 CRLF，
+	// 本项目的行解析器随后就读不出 dns / derp 块了。落盘前统一成 LF。
+	content = normalizeEOL(content)
 	_ = os.WriteFile(c.Config+".bak."+time.Now().Format("20060102-150405"), old, 0600)
 	if err := os.WriteFile(c.Config, []byte(content), 0600); err != nil {
 		return err
@@ -433,6 +463,8 @@ func (c *HSClient) SavePolicy(content string, lang ...string) error {
 	if p == "" {
 		return errors.New(tr(L, "hs.noPolicyPath"))
 	}
+	// 同 SaveConfig：浏览器 textarea 提交的是 CRLF，落盘前统一成 LF。
+	content = normalizeEOL(content)
 	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		return err
 	}

@@ -715,27 +715,41 @@
 // 提交前记下位置，重定向回来后恢复。
 (function () {
   var KEY = 'hsa.scrollY';
+  var FLASH_KEY = 'hsa.flashH';
+
+  // 顶部提示条（flash）占文档流高度：它出现或消失都会把下面的正文整体推移。
+  // 提交前记下当时提示条占的高度，跳转回来后按「新旧差值」补偿。
+  // 只加新提示条的高度是错的：页面上本来就有提示条时（比如刚做完上一个操作）
+  // 会多算一次，落点会偏出一个提示条的高度。
+  function flashHeight() {
+    var flash = document.querySelector('.flash');
+    if (!flash) return 0;
+    var mb = 0;
+    try { mb = parseFloat(window.getComputedStyle(flash).marginBottom) || 0; } catch (e) {}
+    return (flash.offsetHeight || 0) + mb;
+  }
+
   document.addEventListener('submit', function (e) {
     // 提交被确认弹窗拦下（preventDefault）时并没有真的提交，别记位置。
     if (e.defaultPrevented) return;
-    try { sessionStorage.setItem(KEY, String(window.scrollY || 0)); } catch (e) {}
+    try {
+      sessionStorage.setItem(KEY, String(window.scrollY || 0));
+      sessionStorage.setItem(FLASH_KEY, String(flashHeight()));
+    } catch (e) {}
   });
   function restore() {
-    var v;
+    var v, oldFlash = 0;
     try {
       v = sessionStorage.getItem(KEY);
+      oldFlash = parseFloat(sessionStorage.getItem(FLASH_KEY) || '0') || 0;
       sessionStorage.removeItem(KEY);
+      sessionStorage.removeItem(FLASH_KEY);
     } catch (e) { return; }
     if (v === null || v === undefined) return;
     var y = parseInt(v, 10);
     if (isNaN(y) || y <= 0) return;
-    // 顶部提示条会把正文整体下移，补上它的高度，恢复到同一屏内容。
-    var flash = document.querySelector('.flash');
-    if (flash) {
-      var mb = 0;
-      try { mb = parseFloat(window.getComputedStyle(flash).marginBottom) || 0; } catch (e) {}
-      y += flash.offsetHeight + mb;
-    }
+    y += flashHeight() - oldFlash;
+    if (y < 0) y = 0;
     window.scrollTo(0, y);
   }
   if (document.readyState === 'complete') restore();

@@ -1026,6 +1026,7 @@ func blockLine(lines []string, from, to, indent int, key string) (int, int) {
 
 // listValues 读取 path 指向的列表项（path 每层缩进依次 +2）。
 func listValues(content string, path ...string) []string {
+	content = normalizeEOL(content)
 	lines := strings.Split(content, "\n")
 	from, to, indent := 0, len(lines), 0
 	for _, key := range path {

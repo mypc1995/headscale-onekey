@@ -375,6 +375,25 @@ curl -s -b "$JAR" -X POST "$BASE/network/acl" \
 curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n5.html"
 grep -q 'ACL 策略不能为空' "$TMPDIR/n5.html" && ok "空 ACL 被拦截并提示" || fail "空 ACL 未提示"
 
+info "验证整份配置覆盖保存（模拟浏览器 textarea 的 CRLF 提交）"
+# 浏览器的 textarea 按 HTML 规范用 CRLF 提交，服务端原样落盘就会把配置写成 CRLF。
+# headscale 自己的 YAML 解析器能接受 CRLF，但本项目的行解析器（blockBody 要求
+# 块头后面紧跟 \n）认不出来，于是 dns 块里的值全被读成空：页面上域名是空的、
+# 开关是未勾选的，用户再点一次「保存 DNS」，空值就被写回配置。
+# 生产上已经中招：/etc/headscale/config.yaml 里有 311 个 CR 字节。
+CRLF_CONFIG="$(sed 's/$/\r/' "$TMPDIR/config.yaml")"
+curl -s -b "$JAR" -X POST "$BASE/network/config" \
+  --data-urlencode "csrf=${NCSRF}" --data-urlencode "config=${CRLF_CONFIG}" -o /dev/null
+if grep -q $'\r' "$TMPDIR/config.yaml"; then
+  fail "CRLF 提交后配置文件里仍有 CR 字节（配置被写成了 CRLF）"
+else
+  ok "CRLF 提交后配置文件已归一化为 LF"
+fi
+# 页面回读：dns 块的值必须还在。CRLF 被原样落盘时这里会读成空。
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/n6.html"
+grep -q 'name="base_domain" value="hs.example.com"' "$TMPDIR/n6.html" && ok "覆盖保存后域名仍能读回" || fail "覆盖保存后域名读不回来了"
+grep 'name="magic_dns"' "$TMPDIR/n6.html" | grep -c 'checked' >/dev/null && ok "覆盖保存后 MagicDNS 开关仍显示已勾选" || fail "覆盖保存后 MagicDNS 开关状态丢失"
+
 info "验证管理界面 HTTPS 卡片"
 for kw in '管理界面 HTTPS' 'id="admin-tls-enabled"' 'id="admin-tls-body"' 'name="admin_cert_pem"' 'name="admin_key_pem"'; do
   grep -q "$kw" "$TMPDIR/settings.html" && ok "配置页包含「$kw」" || fail "配置页缺少「$kw」"
@@ -482,6 +501,9 @@ else
 fi
 grep -q 'hsa-modal' "$SRC_ROOT/static/app.js" && ok "确认弹窗逻辑已就绪" || fail "缺少确认弹窗逻辑"
 grep -q 'hsa.scrollY' "$SRC_ROOT/static/app.js" && ok "提交后恢复滚动位置的逻辑已就绪" || fail "缺少滚动位置恢复逻辑"
+# 滚动补偿必须按「提示条高度差」算：只加新提示条的高度，在「页面上本来就有
+# 提示条」时会多算一次，落点偏出一个提示条的高度（实测偏 68px）。
+grep -q 'hsa.flashH' "$SRC_ROOT/static/app.js" && ok "滚动补偿按提示条高度差计算" || fail "滚动补偿没有按提示条高度差计算"
 
 info "验证节点网速上报通道"
 SPEED_TOKEN="test-speed-token"

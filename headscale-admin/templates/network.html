@@ -3,31 +3,38 @@
   <div class="card-head"><h2 class="card-title">{{icon "network" 18}} {{t .Lang "section.dns"}}</h2></div>
   <form method="post" action="/network/dns" class="form-stack">
     {{template "csrf" .}}
-    <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label">{{t .Lang "label.baseDomain"}}<span class="key">dns.base_domain</span></label>
-        <input class="form-input" name="base_domain" value="{{.Data.BaseDomain}}" required>
-      </div>
-      <div class="form-group check-stack">
-        <label class="check-label"><input class="form-checkbox" type="checkbox" name="magic_dns" {{if eq .Data.MagicDNS "true"}}checked{{end}}> {{t .Lang "label.magicDNS"}}<span class="key">dns.magic_dns</span></label>
-        <label class="check-label"><input class="form-checkbox" type="checkbox" name="override_local_dns" {{if eq .Data.OverrideLocal "true"}}checked{{end}}> {{t .Lang "label.overrideLocal"}}<span class="key">dns.override_local_dns</span></label>
-      </div>
-    </div>
     <div class="form-group">
-      <label class="form-label">{{t .Lang "label.nameservers"}}<span class="key">dns.nameservers.global</span></label>
-      <div class="dyn-rows" id="ns-rows">
-        {{range .Data.Nameservers}}<div class="dyn-row"><input class="form-input" name="ns" value="{{.}}" placeholder="223.5.5.5"><button type="button" class="btn btn-sm btn-ghost row-del" title="{{t $.Lang "action.delRow"}}">{{icon "x" 13}}</button></div>{{end}}
-        <div class="dyn-row"><input class="form-input" name="ns" value="" placeholder="223.5.5.5"><button type="button" class="btn btn-sm btn-ghost row-add" data-target="ns-rows" title="{{t $.Lang "action.addRow"}}">{{icon "plus" 13}}</button></div>
-      </div>
-      <span class="field-hint">{{t .Lang "hint.nameservers"}}</span>
+      <label class="form-label">{{t .Lang "label.baseDomain"}}<span class="key">dns.base_domain</span></label>
+      <input class="form-input" name="base_domain" value="{{.Data.BaseDomain}}" required>
+      <span class="field-hint">{{t .Lang "cfg.hint.baseDomain"}}</span>
     </div>
-    <div class="form-group">
-      <label class="form-label">{{t .Lang "label.searchDomains"}}<span class="key">dns.search_domains</span></label>
-      <div class="dyn-rows" id="sd-rows">
-        {{range .Data.SearchDomains}}<div class="dyn-row"><input class="form-input" name="search" value="{{.}}" placeholder="internal.example.com"><button type="button" class="btn btn-sm btn-ghost row-del" title="{{t $.Lang "action.delRow"}}">{{icon "x" 13}}</button></div>{{end}}
-        <div class="dyn-row"><input class="form-input" name="search" value="" placeholder="internal.example.com"><button type="button" class="btn btn-sm btn-ghost row-add" data-target="sd-rows" title="{{t $.Lang "action.addRow"}}">{{icon "plus" 13}}</button></div>
+    <div class="dns-switches">
+      <label class="check-line">
+        <input class="form-checkbox" type="checkbox" name="magic_dns" {{if eq .Data.MagicDNS "true"}}checked{{end}}>
+        <span>{{t .Lang "label.magicDNS"}}<span class="key">dns.magic_dns</span><small>{{t .Lang "cfg.hint.magicDNS"}}</small></span>
+      </label>
+      <label class="check-line">
+        <input class="form-checkbox" type="checkbox" name="override_local_dns" {{if eq .Data.OverrideLocal "true"}}checked{{end}}>
+        <span>{{t .Lang "label.overrideLocal"}}<span class="key">dns.override_local_dns</span><small>{{t .Lang "hint.overrideLocal"}}</small></span>
+      </label>
+    </div>
+    <div class="dns-lists">
+      <div class="field-panel">
+        <label class="form-label">{{t .Lang "label.nameservers"}}<span class="key">dns.nameservers.global</span></label>
+        <div class="dyn-rows" id="ns-rows">
+          {{range .Data.Nameservers}}<div class="dyn-row"><input class="form-input" name="ns" value="{{.}}" placeholder="223.5.5.5"><button type="button" class="btn btn-sm btn-ghost row-del" title="{{t $.Lang "action.delRow"}}">{{icon "x" 13}}</button></div>{{end}}
+          <div class="dyn-row"><input class="form-input" name="ns" value="" placeholder="223.5.5.5"><button type="button" class="btn btn-sm btn-ghost row-add" data-target="ns-rows" title="{{t $.Lang "action.addRow"}}">{{icon "plus" 13}}</button></div>
+        </div>
+        <span class="field-hint">{{t .Lang "hint.nameservers"}}</span>
       </div>
-      <span class="field-hint">{{t .Lang "hint.searchDomains"}}</span>
+      <div class="field-panel">
+        <label class="form-label">{{t .Lang "label.searchDomains"}}<span class="key">dns.search_domains</span></label>
+        <div class="dyn-rows" id="sd-rows">
+          {{range .Data.SearchDomains}}<div class="dyn-row"><input class="form-input" name="search" value="{{.}}" placeholder="internal.example.com"><button type="button" class="btn btn-sm btn-ghost row-del" title="{{t $.Lang "action.delRow"}}">{{icon "x" 13}}</button></div>{{end}}
+          <div class="dyn-row"><input class="form-input" name="search" value="" placeholder="internal.example.com"><button type="button" class="btn btn-sm btn-ghost row-add" data-target="sd-rows" title="{{t $.Lang "action.addRow"}}">{{icon "plus" 13}}</button></div>
+        </div>
+        <span class="field-hint">{{t .Lang "hint.searchDomains"}}</span>
+      </div>
     </div>
     <div class="form-actions">
       <label class="check-label"><input class="form-checkbox" type="checkbox" name="apply_now" checked> {{t .Lang "cfg.field.applyNow"}}</label>

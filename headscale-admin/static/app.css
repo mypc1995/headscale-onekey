@@ -397,7 +397,7 @@ code {
 .form-group { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .form-label { font-size: .88rem; font-weight: 800; color: var(--text-secondary); letter-spacing: .01em; line-height: 1.45; }
 /* 字段名旁的原始配置键，方便对照 YAML，但视觉上不抢主标题 */
-.form-label .key {
+.form-label .key, .check-line .key {
   display: inline-block; margin-left: 7px; padding: 1px 6px; vertical-align: 1px; white-space: nowrap;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: .72rem; font-weight: 600; letter-spacing: 0;
@@ -637,6 +637,21 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .dyn-row .form-input { flex: 1; min-width: 0; }
 .check-stack { display: flex; flex-direction: column; gap: 10px; justify-content: center; }
 .check-label .key { margin-left: 6px; font-size: .72rem; color: var(--text-tertiary); font-weight: 400; }
+/* DNS 设置的排版：
+   原来根域独占半格、两个开关挤在另一半，DNS 服务器与搜索域各占一整行，
+   整张卡片被拉得很长。现在改成：根域整行 → 两个带说明的开关并排 →
+   DNS 服务器与搜索域并排成两块子面板。 */
+.dns-switches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.dns-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 22px; align-items: start; }
+.field-panel {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  padding: 14px 16px; background: var(--bg-primary);
+  border: var(--border-width) solid var(--border); border-radius: var(--radius-md);
+}
+.field-panel .field-hint { max-width: none; }
+@media (max-width: 900px) {
+  .dns-switches, .dns-lists { grid-template-columns: minmax(0, 1fr); }
+}
 .acl-builder { margin-bottom: 12px; padding: 12px; border: var(--border-width) dashed var(--border); border-radius: var(--radius-md); background: var(--bg-primary); }
 .builder-title { font-weight: 700; font-size: .9rem; margin-bottom: 8px; }
 .builder-row { display: flex; gap: 8px; flex-wrap: wrap; }

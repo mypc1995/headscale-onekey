@@ -204,6 +204,7 @@ var dict = map[string][2]string{
 	"section.dns":         {"DNS 设置", "DNS settings"},
 	"section.derp":        {"DERP 中继", "DERP relay"},
 	"hint.nameservers":    {"每行一个，支持 IP（如 223.5.5.5）或加密 DNS 地址（https://、tls://、quic:// 开头）。留空则使用运营商/系统默认。", "One per row: an IP (e.g. 223.5.5.5) or an encrypted DNS URL (https://, tls://, quic://). Leave empty to use system defaults."},
+	"hint.overrideLocal":  {"开启后设备一律使用上面配置的 DNS 服务器，忽略设备自己的 DNS 设置；此时必须至少填一条 DNS 服务器。", "When enabled, devices use the DNS servers above and ignore their own DNS settings; at least one server is required then."},
 	"hint.searchDomains":  {"设备解析短域名时自动补全的后缀，例如填 internal.example.com 后访问 db 等同于 db.internal.example.com。可留空。", "Suffixes appended when devices resolve short names, e.g. with internal.example.com, 'db' resolves to db.internal.example.com. Optional."},
 	"hint.regionID":       {"自建中继的区域编号，不能与公共中继冲突，默认 900。", "Region number of the embedded relay; must not clash with public relays. Default 900."},
 	"action.addRow":       {"添加一行", "Add row"},
