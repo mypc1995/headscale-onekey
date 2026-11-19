@@ -78,6 +78,15 @@
 {{define "foot"}}  </div>
 </main>
 </div>
+<div class="modal-mask" id="hsa-modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="hsa-modal-text">
+    <p class="modal-text" id="hsa-modal-text"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="hsa-modal-cancel">{{t .Lang "modal.cancel"}}</button>
+      <button type="button" class="btn btn-primary" id="hsa-modal-ok">{{t .Lang "modal.ok"}}</button>
+    </div>
+  </div>
+</div>
 <script src="/static/app.js"></script>
 </body>
 </html>{{end}}

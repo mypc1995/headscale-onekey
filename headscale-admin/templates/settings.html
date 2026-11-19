@@ -249,7 +249,7 @@
           <button class="btn" type="submit">{{icon "save" 15}} {{t .Lang "cfg.action.saveRenew"}}</button>
         </div>
       </form>
-      <form method="post" action="/settings/renew" onsubmit="return confirm('{{t .Lang "confirm.restart"}}')">
+      <form method="post" action="/settings/renew" data-confirm="{{t .Lang "confirm.restart"}}">
         {{template "csrf" .}}
         <div class="form-actions"><button class="btn btn-secondary" type="submit">{{icon "refresh" 15}} {{t .Lang "cfg.renew.renewNow"}}</button></div>
       </form>
@@ -297,7 +297,7 @@
     {{if .Data.AdminHTTPSLive}}<span class="badge success">HTTPS</span>{{else}}<span class="badge muted">HTTP</span>{{end}}</div>
   <p class="hint">{{t .Lang "adminTLS.intro"}}</p>
   {{with index .Data.Errors "admin_tls"}}<div class="notice warn">{{icon "x" 17}}<span>{{.}}</span></div>{{end}}
-  <form method="post" action="/settings/admin-tls" class="form-stack" onsubmit="return confirm('{{t .Lang "adminTLS.confirm"}}')">
+  <form method="post" action="/settings/admin-tls" class="form-stack" data-confirm="{{t .Lang "adminTLS.confirm"}}">
     {{template "csrf" .}}
     <label class="check-label"><input class="form-checkbox" type="checkbox" name="enabled" id="admin-tls-enabled" {{if .Data.AdminTLS.Enabled}}checked{{end}}> {{t .Lang "adminTLS.enable"}}</label>
     <div id="admin-tls-body" {{if not .Data.AdminTLS.Enabled}}hidden{{end}}>

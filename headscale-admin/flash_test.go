@@ -3,7 +3,9 @@ package main
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestFlashRoundTrip 验证一次性提示消息（flash）能写入、取回，且只取一次。
@@ -83,5 +85,47 @@ func TestFlashUnknownToken(t *testing.T) {
 
 	if got := m.TakeFlash("不存在的token"); got != "" {
 		t.Fatalf("未知 token 应返回空串，得到 %q", got)
+	}
+}
+
+// TestActionDetail 验证提示详情不会把 CLI 的原始输出当成人看的文案。
+//
+// headscale CLI 调用一律带 -o json，变更类命令（建用户、删节点、改标签…）的
+// stdout 就是 JSON，空结果是一个 "{}"。直接拼进提示会变成「操作成功：{}」
+// 这种没人看得懂的文案——JSON 是给程序看的，不是给人看的。
+func TestActionDetail(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"空输出", "", ""},
+		{"JSON 对象", "{}", ""},
+		{"JSON 数组", `[{"id":1}]`, ""},
+		{"带空白的 JSON", "  {}  ", ""},
+		{"纯文本", "node renamed", "node renamed"},
+		{"纯文本带首尾空白", "  done\n", "done"},
+	}
+	for _, c := range cases {
+		if got := actionDetail(c.in); got != c.want {
+			t.Errorf("%s: actionDetail(%q) = %q，期望 %q", c.name, c.in, got, c.want)
+		}
+	}
+
+	// 过长的详情要截断，避免把整段 CLI 输出塞进提示条。
+	long := strings.Repeat("a", 300)
+	got := actionDetail(long)
+	if len([]rune(got)) != 161 || !strings.HasSuffix(got, "…") {
+		t.Errorf("过长详情应截断为 160 字符加省略号，实际长度 %d：%q", len([]rune(got)), got)
+	}
+
+	// 中文详情按字节切会把汉字劈成两半（乱码），必须按 rune 截断。
+	cn := strings.Repeat("节", 300)
+	got = actionDetail(cn)
+	if len([]rune(got)) != 161 || !strings.HasSuffix(got, "…") {
+		t.Errorf("中文详情应按 rune 截断为 160 字符加省略号，实际长度 %d：%q", len([]rune(got)), got)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("截断后的中文详情不是合法 UTF-8：%q", got)
 	}
 }

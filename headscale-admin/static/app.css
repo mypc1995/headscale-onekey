@@ -643,3 +643,27 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .builder-row .form-input { flex: 1; min-width: 160px; }
 .builder-row .btn { flex: none; white-space: nowrap; }
 .acl-builder .hint { margin: 8px 0 0; }
+
+/* 确认弹窗：页内模态框，固定居中。
+   原生 confirm() 由浏览器绘制，位置不受控（常浮在页面顶部、与网页风格不一致），
+   改成固定定位的遮罩 + 居中对话框：位置稳定、样式跟随 14 套主题，
+   还能顺手处理「确认后表单重定向把页面滚回顶部」的问题。 */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 1200;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(12, 12, 32, .48);
+}
+.modal-mask[hidden] { display: none; }
+.modal-box {
+  width: 100%; max-width: 430px;
+  padding: 20px 22px;
+  background: var(--surface-elevated); color: var(--text-primary);
+  border: var(--border-width) solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.modal-text { margin: 0 0 18px; font-size: .95rem; font-weight: 700; line-height: 1.6; word-break: break-word; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 520px) {
+  .modal-box { padding: 16px 18px; }
+  .modal-actions .btn { flex: 1 1 auto; }
+}

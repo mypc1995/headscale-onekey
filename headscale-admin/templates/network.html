@@ -72,7 +72,7 @@
     </div>
     <p class="hint">{{t .Lang "acl.builderHint"}}</p>
   </div>
-  <form method="post" action="/network/acl" onsubmit="return confirm('{{t .Lang "confirm.saveACL"}}')">
+  <form method="post" action="/network/acl" data-confirm="{{t .Lang "confirm.saveACL"}}">
     {{template "csrf" .}}
     <textarea class="form-input mono" id="acl-editor" name="acl" rows="18" spellcheck="false">{{.Data.ACL}}</textarea>
     <div class="form-actions"><button class="btn btn-primary" type="submit">{{icon "save" 15}} {{t .Lang "action.saveValidate"}}</button></div>
@@ -81,7 +81,7 @@
 
 <section class="card">
   <div class="card-head"><h2 class="card-title">{{icon "server" 18}} {{t .Lang "section.fullConfig"}}</h2></div>
-  <form method="post" action="/network/config" onsubmit="return confirm('{{t .Lang "confirm.saveConfig"}}')">
+  <form method="post" action="/network/config" data-confirm="{{t .Lang "confirm.saveConfig"}}">
     {{template "csrf" .}}
     <textarea class="form-input mono" name="config" rows="20" spellcheck="false">{{.Data.Config}}</textarea>
     <div class="form-actions"><button class="btn btn-danger" type="submit">{{icon "save" 15}} {{t .Lang "action.overwrite"}}</button></div>

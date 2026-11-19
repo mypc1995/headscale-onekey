@@ -9,7 +9,7 @@
       <td class="muted small">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
       <td class="ops">
         <form method="post" action="/admins/role">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><select class="form-input" name="role"><option value="admin" {{if eq .Role "admin"}}selected{{end}}>{{t $.Lang "role.admin"}}</option><option value="readonly" {{if eq .Role "readonly"}}selected{{end}}>{{t $.Lang "role.readonly"}}</option></select><button class="btn btn-sm" type="submit">{{t $.Lang "action.changeRole"}}</button></form>
-        <form method="post" action="/admins/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteAdmin" .Username}}')">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
+        <form method="post" action="/admins/delete" data-confirm="{{t $.Lang "confirm.deleteAdmin" .Username}}">{{template "csrf" $}}<input type="hidden" name="username" value="{{.Username}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
     </tr>{{end}}</tbody>
   </table></div>

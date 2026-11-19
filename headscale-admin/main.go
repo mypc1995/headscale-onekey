@@ -304,6 +304,27 @@ func formUint(r *http.Request, key string) (uint64, error) {
 	return strconv.ParseUint(v, 10, 64)
 }
 
+// actionDetail 把 headscale CLI 的输出整理成给人看的提示详情。
+//
+// CLI 调用一律带 -o json，变更类命令（建用户、删节点、改标签…）的 stdout 是
+// JSON，空结果就是一个 "{}"。直接把它拼进提示会变成「操作成功：{}」这种
+// 没人看得懂的文案——JSON 是给程序看的，不是给人看的。
+// 所以只有非 JSON 的纯文本才当作详情展示，其余一律用「操作成功」收尾。
+func actionDetail(out string) string {
+	msg := strings.TrimSpace(out)
+	if msg == "" {
+		return ""
+	}
+	if strings.HasPrefix(msg, "{") || strings.HasPrefix(msg, "[") {
+		return ""
+	}
+	// 按 rune 截断：中文输出按字节切会把一个汉字劈成两半，显示成乱码。
+	if runes := []rune(msg); len(runes) > 160 {
+		msg = string(runes[:160]) + "…"
+	}
+	return msg
+}
+
 func (a *App) doAction(w http.ResponseWriter, r *http.Request, to string, fn func() (string, error)) {
 	lang := langFrom(r)
 	out, err := fn()
@@ -311,10 +332,7 @@ func (a *App) doAction(w http.ResponseWriter, r *http.Request, to string, fn fun
 		a.redirectWithFlash(w, r, to, tr(lang, "msg.operationFailed", err.Error()))
 		return
 	}
-	msg := strings.TrimSpace(out)
-	if len(msg) > 160 {
-		msg = msg[:160] + "…"
-	}
+	msg := actionDetail(out)
 	if msg == "" {
 		msg = tr(lang, "msg.operationSuccess")
 	} else {

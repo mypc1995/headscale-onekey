@@ -644,3 +644,100 @@
     });
   });
 })();
+
+// 确认弹窗：把浏览器原生 confirm() 换成页内模态框。
+//
+// 原生 confirm() 由浏览器绘制，位置不受控（常常浮在页面顶部），样式也和网页不一致；
+// 这里改成固定定位的遮罩 + 居中对话框：位置稳定、跟随 14 套主题，Esc / 点遮罩也能取消。
+// 需要确认的表单用 data-confirm="提示语" 声明：HTML 属性会被模板引擎转义，
+// 比把提示语塞进 JS 字符串安全（提示语里带单引号也不会把脚本写坏）。
+(function () {
+  var mask = document.getElementById('hsa-modal');
+  if (!mask) return;
+  var textEl = document.getElementById('hsa-modal-text');
+  var okBtn = document.getElementById('hsa-modal-ok');
+  var cancelBtn = document.getElementById('hsa-modal-cancel');
+  var resolver = null;
+  var lastFocus = null;
+
+  function close(ok) {
+    mask.hidden = true;
+    var done = resolver;
+    resolver = null;
+    if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) {} }
+    if (done) done(ok);
+  }
+
+  function open(message, done) {
+    if (textEl) textEl.textContent = message;
+    lastFocus = document.activeElement;
+    resolver = done;
+    mask.hidden = false;
+    if (okBtn) okBtn.focus();
+  }
+
+  if (okBtn) okBtn.addEventListener('click', function () { close(true); });
+  if (cancelBtn) cancelBtn.addEventListener('click', function () { close(false); });
+  mask.addEventListener('click', function (e) {
+    if (e.target === mask) close(false);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !mask.hidden) close(false);
+  });
+
+  // 捕获阶段拦下提交：先弹窗确认，确认通过再真正提交。
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || typeof form.getAttribute !== 'function') return;
+    var message = form.getAttribute('data-confirm');
+    if (!message) return;
+    if (form.getAttribute('data-hsa-confirmed') === '1') {
+      // 已经确认过这一次的提交，放行，别再弹一次。
+      form.removeAttribute('data-hsa-confirmed');
+      return;
+    }
+    e.preventDefault();
+    open(message, function (ok) {
+      if (!ok) return;
+      form.setAttribute('data-hsa-confirmed', '1');
+      // requestSubmit 会重新走一遍校验；浏览器太老没有它时退回 submit()。
+      if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.submit();
+      // 校验没通过时 submit 事件压根不会触发，标记会留在表单上，
+      // 导致下一次提交被误放行、跳过确认弹窗。这里兜底清掉。
+      setTimeout(function () { form.removeAttribute('data-hsa-confirmed'); }, 0);
+    });
+  }, true);
+})();
+
+// 表单提交后服务端用 303 重定向回本页，浏览器会把滚动位置重置到顶部——
+// 长页面（配置项、运维监控）上点一次按钮就得重新往下翻。
+// 提交前记下位置，重定向回来后恢复。
+(function () {
+  var KEY = 'hsa.scrollY';
+  document.addEventListener('submit', function (e) {
+    // 提交被确认弹窗拦下（preventDefault）时并没有真的提交，别记位置。
+    if (e.defaultPrevented) return;
+    try { sessionStorage.setItem(KEY, String(window.scrollY || 0)); } catch (e) {}
+  });
+  function restore() {
+    var v;
+    try {
+      v = sessionStorage.getItem(KEY);
+      sessionStorage.removeItem(KEY);
+    } catch (e) { return; }
+    if (v === null || v === undefined) return;
+    var y = parseInt(v, 10);
+    if (isNaN(y) || y <= 0) return;
+    // 顶部提示条会把正文整体下移，补上它的高度，恢复到同一屏内容。
+    var flash = document.querySelector('.flash');
+    if (flash) {
+      var mb = 0;
+      try { mb = parseFloat(window.getComputedStyle(flash).marginBottom) || 0; } catch (e) {}
+      y += flash.offsetHeight + mb;
+    }
+    window.scrollTo(0, y);
+  }
+  if (document.readyState === 'complete') restore();
+  else window.addEventListener('load', restore);
+})();

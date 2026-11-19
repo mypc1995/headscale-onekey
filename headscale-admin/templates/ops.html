@@ -132,7 +132,7 @@
     <div class="kv-row"><span>{{t .Lang "field.policyFile"}}</span><b class="small"><code>{{.Data.PolicyPath}}</code></b></div>
   </div>
   <div class="form-actions">
-    <form method="post" action="/ops/restart" onsubmit="return confirm('{{t .Lang "confirm.restart"}}')">{{template "csrf" .}}<button class="btn btn-warning" type="submit">{{icon "refresh" 15}} {{t .Lang "action.restart"}}</button></form>
+    <form method="post" action="/ops/restart" data-confirm="{{t .Lang "confirm.restart"}}">{{template "csrf" .}}<button class="btn btn-warning" type="submit">{{icon "refresh" 15}} {{t .Lang "action.restart"}}</button></form>
   </div>
 </section>
 

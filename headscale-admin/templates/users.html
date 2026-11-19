@@ -17,8 +17,8 @@
     <tbody>{{range .Data.Users}}<tr>
       <td>{{.ID}}</td><td><b>{{.Name}}</b></td><td class="muted small">{{tf .CreatedAt}}</td>
       <td class="ops">
-        <form method="post" action="/users/rename" onsubmit="return confirm('{{t $.Lang "confirm.renameUser"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><input class="form-input" name="new_name" value="{{.Name}}" required><button class="btn btn-sm" type="submit">{{t $.Lang "action.rename"}}</button></form>
-        <form method="post" action="/users/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteUser" .Name}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
+        <form method="post" action="/users/rename" data-confirm="{{t $.Lang "confirm.renameUser"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><input class="form-input" name="new_name" value="{{.Name}}" required><button class="btn btn-sm" type="submit">{{t $.Lang "action.rename"}}</button></form>
+        <form method="post" action="/users/delete" data-confirm="{{t $.Lang "confirm.deleteUser" .Name}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{.ID}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
     </tr>{{end}}</tbody>
   </table></div>{{else}}<div class="empty">{{icon "users" 18}} {{t .Lang "empty.users"}}</div>{{end}}

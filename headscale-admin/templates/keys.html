@@ -77,8 +77,8 @@
       </td>
       <td class="muted small">{{tf (index . "expiration")}}</td>
       <td class="ops">
-        <form method="post" action="/keys/preauth/expire" onsubmit="return confirm('{{t $.Lang "confirm.expireKey"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>
-        <form method="post" action="/keys/preauth/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteKey"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
+        <form method="post" action="/keys/preauth/expire" data-confirm="{{t $.Lang "confirm.expireKey"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>
+        <form method="post" action="/keys/preauth/delete" data-confirm="{{t $.Lang "confirm.deleteKey"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
     </tr>{{end}}</tbody>
   </table></div>{{else}}<div class="empty">{{icon "key" 18}} {{t .Lang "empty.preauth"}}</div>{{end}}
@@ -109,8 +109,8 @@
     <tbody>{{range .Data.APIKeys}}<tr>
       <td>{{field . "id"}}</td><td><code>{{field . "prefix"}}</code></td><td class="muted small">{{tf (index . "expiration")}}</td><td class="muted small">{{tf (index . "created_at")}}</td>
       <td class="ops">
-        <form method="post" action="/keys/api/expire" onsubmit="return confirm('{{t $.Lang "confirm.expireAPI"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>
-        <form method="post" action="/keys/api/delete" onsubmit="return confirm('{{t $.Lang "confirm.deleteAPI"}}')">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
+        <form method="post" action="/keys/api/expire" data-confirm="{{t $.Lang "confirm.expireAPI"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.revoke"}}</button></form>
+        <form method="post" action="/keys/api/delete" data-confirm="{{t $.Lang "confirm.deleteAPI"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
       </td>
     </tr>{{end}}</tbody>
   </table></div>{{else}}<div class="empty">{{icon "lock" 18}} {{t .Lang "empty.apiKeys"}}</div>{{end}}

@@ -239,6 +239,10 @@ var dict = map[string][2]string{
 	"net.sparkUp":     {"上行速率曲线", "Upload rate history"},
 	"confirm.restart": {"确认重启 headscale 服务？现有连接会短暂中断。", "Restart headscale? Existing connections will briefly drop."},
 
+	// 确认弹窗（页内模态框，替代浏览器原生 confirm）
+	"modal.ok":     {"确定", "Confirm"},
+	"modal.cancel": {"取消", "Cancel"},
+
 	// 本机资源 / host resources
 	"section.host":     {"本机资源", "Host resources"},
 	"host.cpu":         {"CPU 使用率", "CPU usage"},

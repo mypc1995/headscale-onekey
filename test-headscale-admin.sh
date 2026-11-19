@@ -60,6 +60,15 @@ esac
 EOF
 chmod +x "$TMPDIR/fake-hs"
 
+# 假 headscale 的调用方式：Linux 下直接跑这个 sh 脚本；Windows 下 Go 的 exec
+# 不能执行没有扩展名的文件（会直接报 exec 错误），列表类命令会全部失败、
+# 页面拿不到任何数据，所以额外放一个 .cmd 转发给 sh。
+HS_BIN="$TMPDIR/fake-hs"
+if [[ "$(uname -s)" != "Linux" ]]; then
+  HS_BIN="$TMPDIR/fake-hs.cmd"
+  printf '@echo off\r\ncd /d "%%~dp0"\r\n"%s" fake-hs %%*\r\n' "$(cygpath -w "$(command -v sh)")" >"$HS_BIN"
+fi
+
 info "初始化测试管理员"
 HSA_DATA_FILE="$TMPDIR/app.db" HSA_LEGACY_JSON="$TMPDIR/admins.json" "$TMPDIR/hsa" --init-only --admin-user admin --admin-pass testpass123 >"$TMPDIR/init.log" 2>&1 || { fail "初始化失败"; cat "$TMPDIR/init.log"; exit 1; }
 [[ -s "$TMPDIR/app.db" ]] && ok "SQLite 数据库已生成" || fail "SQLite 数据库未生成"
@@ -94,7 +103,7 @@ policy:
 YAML
 
 PORT=$((39000 + RANDOM % 1000))
-HSA_HEADSCALE_BIN="$TMPDIR/fake-hs" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" "$TMPDIR/hsa" \
+HSA_HEADSCALE_BIN="$HS_BIN" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
   -node-speed-token test-speed-token \
   >"$TMPDIR/server.log" 2>&1 &
@@ -452,6 +461,27 @@ CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/users.html" | head -1 | sed
 [[ ${#CSRF} -ge 32 ]] && ok "CSRF token 已下发" || fail "未找到 CSRF token"
 [[ "$(curl -s -b "$JAR" -X POST "$BASE/users/create" -d 'name=x' -o /dev/null -w '%{http_code}')" == "400" ]] && ok "缺少 CSRF 的请求被拒绝" || fail "缺少 CSRF 未被拒绝"
 [[ "$(curl -s -b "$JAR" -X POST "$BASE/users/create" -d "csrf=${CSRF}&name=u1" -o /dev/null -w '%{http_code}')" == "303" ]] && ok "携带 CSRF 的请求通过" || fail "CSRF 校验异常"
+
+info "验证操作提示文案"
+# headscale CLI 的输出是 JSON（假 headscale 统一回 {}），不能原样当成提示文案，
+# 否则页面上会出现「操作成功：{}」这种没人看得懂的东西。
+curl -s -b "$JAR" "$BASE/users" -o "$TMPDIR/users2.html"
+grep -q '操作成功' "$TMPDIR/users2.html" && ok "操作成功提示已显示" || fail "操作成功提示未显示"
+grep -q '操作成功：{}' "$TMPDIR/users2.html" && fail "提示里混进了 CLI 的原始 JSON（操作成功：{}）" || ok "提示里没有 CLI 原始 JSON"
+
+info "验证确认弹窗"
+# 原生 confirm() 由浏览器绘制，位置不可控（常浮在页面顶部），改成页内模态框。
+# 用网络页断言：它的「保存 ACL」「覆盖保存」表单是固定渲染的，与有没有数据无关。
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/net2.html"
+grep -q 'id="hsa-modal"' "$TMPDIR/net2.html" && ok "确认弹窗骨架已下发" || fail "缺少确认弹窗骨架"
+grep -q 'data-confirm=' "$TMPDIR/net2.html" && ok "危险操作带 data-confirm 声明" || fail "危险操作缺少 data-confirm"
+if grep -rq "onsubmit=\"return confirm(" "$SRC_ROOT/templates"; then
+  fail "仍有模板使用浏览器原生 confirm()"
+else
+  ok "模板已全部改用页内确认弹窗"
+fi
+grep -q 'hsa-modal' "$SRC_ROOT/static/app.js" && ok "确认弹窗逻辑已就绪" || fail "缺少确认弹窗逻辑"
+grep -q 'hsa.scrollY' "$SRC_ROOT/static/app.js" && ok "提交后恢复滚动位置的逻辑已就绪" || fail "缺少滚动位置恢复逻辑"
 
 info "验证节点网速上报通道"
 SPEED_TOKEN="test-speed-token"
