@@ -191,8 +191,11 @@ func TestSafeNext(t *testing.T) {
 	}
 }
 
-// TestLoginGuardPenalty 验证登录限速：猜错多次后账号维度开始加延迟，
+// TestLoginGuardPenalty 验证登录限速：猜错多次后「来源 + 账号」维度开始加延迟，
 // 来源 IP 维度累计够多次后直接锁定。
+//
+// 账号维度的键是「来源 + 账号」而不是单独的账号名：只按账号名记的话，
+// 任何匿名攻击者持续对 admin 失败一次，就能让管理员自己每次登录都多等 10 秒。
 func TestLoginGuardPenalty(t *testing.T) {
 	g := newLoginGuard()
 	for i := 0; i < loginUserThreshold; i++ {
@@ -205,15 +208,15 @@ func TestLoginGuardPenalty(t *testing.T) {
 	if wait <= 0 {
 		t.Fatalf("账号维度应加延迟，得到 %v", wait)
 	}
-	// 换一个来源 IP：账号维度的延迟仍然生效（按账号计数）。
-	wait2, _ := g.penalty("admin", "10.0.0.2")
-	if wait2 <= 0 {
-		t.Fatalf("账号维度应继续加延迟，得到 %v", wait2)
-	}
 	// 换个账号名则不受影响。
 	wait3, _ := g.penalty("someone", "10.0.0.1")
 	if wait3 != 0 {
 		t.Fatalf("其它账号不应被牵连，得到 %v", wait3)
+	}
+	// 换个来源 IP 也不受牵连：账号维度的键是「来源 + 账号」的组合。
+	wait2, _ := g.penalty("admin", "10.0.0.2")
+	if wait2 != 0 {
+		t.Fatalf("其它来源不应被牵连，得到 %v", wait2)
 	}
 
 	// IP 维度：累计够多次后锁定。
@@ -224,7 +227,7 @@ func TestLoginGuardPenalty(t *testing.T) {
 	if _, locked := g2.penalty("anyone", "10.0.0.9"); !locked {
 		t.Fatal("来源 IP 累计失败过多后应被锁定")
 	}
-	// 登录成功后计数清零。
+	// 登录成功后清掉「来源 + 账号」这一条。
 	g3 := newLoginGuard()
 	g3.fail("admin", "10.0.0.3")
 	g3.success("admin", "10.0.0.3")

@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +35,9 @@ type App struct {
 	staticDir  string
 	speed      *speedReporter
 	login      *loginGuard
+	// kdfSem 是口令校验的并发闸门，容量决定同时能跑几个 PBKDF2。
+	// 见 newKDFFence。
+	kdfSem chan struct{}
 }
 
 type Page struct {
@@ -168,7 +173,7 @@ func main() {
 		store: store, sessions: NewSessionManager(store.DB, secure), hs: hs, net: NewNetMonitor(),
 		host: NewHostMonitor(), nodes: NewNodeMonitor(hs, reporter.data), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir, dataFile: *dbFile,
-		speed: reporter, login: newLoginGuard(),
+		speed: reporter, login: newLoginGuard(), kdfSem: newKDFFence(),
 	}
 
 	mux := http.NewServeMux()
@@ -205,6 +210,13 @@ func main() {
 		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
+		// 同时在处理的连接数上限。
+		//
+		// net/http 没有 MaxConns 这种字段：ReadTimeout 之类只限制「单条连接
+		// 占多久」，不限制「同时有多少条连接」。慢速连接（Slowloris）可以
+		// 开成千上万条把文件描述符和内存堆满。超时都是 30/120 秒，堆起来
+		// 一样能拖垮机器。所以这里用 ConnState 回调自己数连接。
+		ConnState: newConnLimiter(256).hook(),
 	}
 	if tlsOn {
 		log.Printf("Headscale Admin 监听 %s（HTTPS）", addr)
@@ -375,6 +387,94 @@ func safeNext(next string) bool {
 	return true
 }
 
+const (
+	// loginMaxBody 是登录表单请求体的上限。
+	//
+	// 登录表单只有两个字段（用户名、口令），正常请求体不到 1KB。
+	// 不加限制的话，匿名请求可以往 /login 灌几十 MB 的 body，
+	// 服务端会把它整个读进内存——实测 10 个并发 9MB 的请求就能让
+	// 进程常驻内存从 23MB 涨到 63MB。/api/speed 早有 64KB 的限制，
+	// /login 反而漏了。
+	loginMaxBody = 64 << 10
+	// kdfQueueTimeout 是等待口令校验槽位的最长时间。
+	//
+	// 超过这个时间还没排上，就直接回 429：排队的人越多，
+	// 每个请求要等的时间越长，不设上限的话队列可以无限长。
+	kdfQueueTimeout = 8 * time.Second
+)
+
+// newKDFFence 返回口令校验的并发闸门。
+//
+// 口令用 PBKDF2-HMAC-SHA256 120000 轮存储，校验一次是几十毫秒的纯 CPU。
+// 闸门保证同时最多跑 N 个校验，攻击者用并发请求也榨不出更多 CPU。
+// N 取 CPU 核数减 2：给 headscale 控制面留出余量。
+func newKDFFence() chan struct{} {
+	n := runtime.NumCPU() - 2
+	if n < 1 {
+		n = 1
+	}
+	if n > 8 {
+		n = 8
+	}
+	return make(chan struct{}, n)
+}
+
+// acquireKDF 申请一个口令校验槽位。
+//
+// 拿不到就返回 false：调用方应当直接拒绝这次请求，而不是无限排队。
+// kdfSem 为 nil（测试里手工构造 App 时）时不做限制。
+func (a *App) acquireKDF() (release func(), ok bool) {
+	if a.kdfSem == nil {
+		return func() {}, true
+	}
+	timer := time.NewTimer(kdfQueueTimeout)
+	defer timer.Stop()
+	select {
+	case a.kdfSem <- struct{}{}:
+		return func() { <-a.kdfSem }, true
+	case <-timer.C:
+		return nil, false
+	}
+}
+
+// connLimiter 按连接数限制并发连接。
+//
+// net/http 自己不限制连接条数，这里用 ConnState 回调数：
+// 新建连接 +1，连接关闭 -1，超过上限的直接把这条连接的读写截止时间
+// 设成「当下」，让它立刻握手失败/断开。
+//
+// 计数不会算错：net/http 保证每条被 Accept 的连接先回调 StateNew，
+// 随后 conn.serve 的 defer 一定回调 StateClosed，一一对应。
+type connLimiter struct {
+	cur atomic.Int64
+	max int64
+}
+
+// newConnLimiter 返回一个上限为 max 条连接的限流器。
+func newConnLimiter(max int64) *connLimiter {
+	if max < 1 {
+		max = 1
+	}
+	return &connLimiter{max: max}
+}
+
+// hook 返回可以挂到 http.Server.ConnState 上的回调。
+func (l *connLimiter) hook() func(net.Conn, http.ConnState) {
+	return func(c net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			if l.cur.Add(1) > l.max {
+				// 超过上限：让这条连接立刻失效。
+				// 计数不在这里减——连接关闭后服务端一定会回调 StateClosed，
+				// 那里统一减，否则会出现重复扣减把计数减成负数。
+				_ = c.SetDeadline(time.Now())
+			}
+		case http.StateClosed:
+			l.cur.Add(-1)
+		}
+	}
+}
+
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		if _, ok := a.sessions.Get(c.Value); ok {
@@ -393,11 +493,19 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
+	lang := langFrom(r)
+	// 先给请求体上闸：登录表单正常不到 1KB，超过 64KB 一律拒掉，
+	// 不让它有机会被读进内存。超限时 MaxBytesReader 会让 ParseForm 报错。
+	r.Body = http.MaxBytesReader(w, r.Body, loginMaxBody)
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, tr(langFrom(r), "msg.operationFailed", err.Error()), http.StatusBadRequest)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, tr(lang, "login.bodyTooLarge"), http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, tr(lang, "msg.operationFailed", err.Error()), http.StatusBadRequest)
 		return
 	}
-	lang := langFrom(r)
 	user := strings.TrimSpace(r.FormValue("username"))
 	ip := clientIP(r)
 
@@ -414,7 +522,19 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(wait)
 	}
 
+	// 口令校验前先占一个 KDF 槽位。
+	//
+	// 排队超时就直接回 429：既保护 CPU，也避免攻击者用慢请求
+	// 把服务端的 goroutine 队列撑长。
+	release, got := a.acquireKDF()
+	if !got {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(lang, "login.busy"), "Lang": lang})
+		return
+	}
 	admin, ok := a.store.Verify(user, r.FormValue("password"))
+	release()
 	if !ok {
 		a.login.fail(user, ip)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

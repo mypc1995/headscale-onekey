@@ -474,6 +474,49 @@ func (c *HSClient) SavePolicy(content string, lang ...string) error {
 	return os.WriteFile(p, []byte(content), 0600)
 }
 
+// SavePolicyChecked 校验并保存 ACL 策略文件。
+//
+// 旧实现是「先落盘，再拿 headscale configtest 校验」：configtest 校验的是
+// config.yaml，根本不看策略文件本身，策略写坏了也照样留在盘上——而策略
+// 文件坏掉时 headscale 启动会直接失败，等于留了一颗地雷。
+//
+// 现在改成：先写候选文件 → 用 headscale policy check 校验 → 通过才备份并原子替换。
+// 校验用 headscale 自带的 policy check：它解析 HuJSON，还会核对策略里引用的
+// 用户/组是否真实存在，比自己判 JSON 语法可靠得多。
+func (c *HSClient) SavePolicyChecked(content string, lang ...string) error {
+	L := reqLang(lang)
+	p := c.PolicyPath()
+	if p == "" {
+		return errors.New(tr(L, "hs.noPolicyPath"))
+	}
+	content = normalizeEOL(content)
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	candidate := p + ".candidate"
+	if err := os.WriteFile(candidate, []byte(content), 0600); err != nil {
+		return err
+	}
+	defer os.Remove(candidate)
+
+	out, err := exec.Command(c.Bin, "policy", "check", "-c", c.Config, "-f", candidate).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(string(out), "")))
+		return errors.New(tr(L, "hs.policyInvalid", msg))
+	}
+	if old, err := os.ReadFile(p); err == nil {
+		_ = os.WriteFile(p+".bak."+time.Now().Format("20060102-150405"), old, 0600)
+	}
+	if err := os.Rename(candidate, p); err != nil {
+		return err
+	}
+	// 策略文件得让 headscale 服务读得到：它以 headscale 用户运行，
+	// 管理界面以 root 写入，0600 的 root 文件它读不了。
+	_ = exec.Command("chown", "headscale:headscale", p).Run()
+	return nil
+}
+
 func systemctl(args ...string) (string, error) {
 	cmd := exec.Command("systemctl", args...)
 	b, err := cmd.CombinedOutput()

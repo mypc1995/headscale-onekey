@@ -854,6 +854,9 @@ func (c *HSClient) buildConfig(p *ConfigPage, section string) (string, error) {
 
 // ApplyConfig 采用「临时文件校验 → 备份 → 原子替换 → 重启 → 失败回滚」的流程。
 func (c *HSClient) ApplyConfig(next string, restart bool, lang string) (string, error) {
+	// 行尾统一：调用方可能直接把浏览器 textarea 的内容递进来（CRLF），
+	// 也可能已经是 LF。落盘前统一成 LF，免得候选文件里混着 CRLF。
+	next = normalizeEOL(next)
 	dir := filepath.Dir(c.Config)
 	candidate := filepath.Join(dir, ".config-candidate.yaml")
 	if err := os.WriteFile(candidate, []byte(next), 0600); err != nil {

@@ -44,6 +44,16 @@ grep -q 'fetch(' "$SRC_ROOT/static/app.js" && ok "实时网速刷新脚本就绪
 
 cat >"$TMPDIR/fake-hs" <<'EOF'
 #!/bin/sh
+# 从参数里取 -c / -f 后面的路径值
+argval() {
+  want="$1"; shift
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "$want" ]; then printf '%s' "$a"; return 0; fi
+    prev="$a"
+  done
+  return 1
+}
 case "$*" in
   *"list-routes"*) echo '[]' ;;
   *"users list"*) echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
@@ -55,6 +65,19 @@ case "$*" in
   *"apikeys list"*) echo '[]' ;;
   *"apikeys create"*) echo '"hsapi-test-456"' ;;
   *"version"*) echo 'headscale version v0.29.7' ;;
+  # 模拟 headscale configtest：文件不存在或缺少 server_url 就报错退出 1。
+  # 真 headscale 也是这个行为——配置校验不过就不会被接受。
+  *"configtest"*)
+    f="$(argval -c "$@")"
+    if [ -z "$f" ] || [ ! -f "$f" ]; then echo "config file not found" >&2; exit 1; fi
+    if ! grep -q '^server_url:' "$f"; then echo "invalid config: missing server_url" >&2; exit 1; fi
+    echo "Configuration is valid" ;;
+  # 模拟 headscale policy check：策略必须是一条完整的规则。
+  *"policy check"*)
+    f="$(argval -f "$@")"
+    if [ -z "$f" ] || [ ! -f "$f" ]; then echo "policy file not found" >&2; exit 1; fi
+    if ! grep -q '"action"' "$f" || ! grep -q '}]' "$f"; then echo "invalid policy" >&2; exit 1; fi
+    echo "Policy is valid" ;;
   *) echo '{}' ;;
 esac
 EOF
@@ -102,6 +125,21 @@ policy:
   path: ""
 YAML
 
+# 给策略文件配一个真实路径：ACL 的「校验通过才落盘」链路要靠它。
+# 注意路径形态：写进配置里的路径不会被 MSYS 转成 Windows 形式，
+# Go 在 Windows 上会把 /tmp/xxx 当成 C:\tmp\xxx，跟脚本看到的不是同一个目录。
+# 所以这里统一用 Windows 原生的正斜杠路径（cygpath -m），Linux 下保持原样。
+POLICY_DIR="$TMPDIR"
+if [[ "$(uname -s)" != "Linux" ]]; then POLICY_DIR="$(cygpath -m "$TMPDIR")"; fi
+POLICY_PATH="${POLICY_DIR}/policy.hujson"
+# 用 awk 而不是 sed：配置内容里带 / 的地址很多，sed 的分隔符会被内容截断。
+awk -v p="$POLICY_PATH" '
+  /^policy:/{print; print "  path: \"" p "\""; skip=1; next}
+  skip==1 && /^  path:/{next}
+  {print}
+' "$TMPDIR/config.yaml" >"$TMPDIR/config.yaml.new" && mv "$TMPDIR/config.yaml.new" "$TMPDIR/config.yaml"
+printf '%s\n' '{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}' >"$TMPDIR/policy.hujson"
+
 PORT=$((39000 + RANDOM % 1000))
 HSA_HEADSCALE_BIN="$HS_BIN" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
@@ -133,6 +171,33 @@ for _ in 1 2 3; do
   curl -s -o /dev/null -X POST "$BASE/login" -d 'username=bogus-user&password=wrong'
 done
 [[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "失败尝试后正确口令仍可登录" || fail "失败尝试后无法登录"
+
+info "验证登录防滥用"
+# 请求体上限：登录表单正常不到 1KB，超过 64KB 一律拒掉，不让它被读进内存。
+# 大 body 必须走文件：200KB 塞进命令行参数会超出 Windows 的命令行长度上限
+# （实测报 "Argument list too long"，curl 根本没起来）。
+head -c 200000 /dev/zero | tr '\0' 'x' >"$TMPDIR/big-body.bin"
+code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/login" \
+  -H 'Content-Type: application/x-www-form-urlencoded' --data-binary "@$TMPDIR/big-body.bin")"
+[[ "$code" == "413" ]] && ok "超大登录请求体被拒（413）" || fail "超大登录请求体未被拒（${code}）"
+# 正常大小的表单不能被误拒。
+code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/login" \
+  --data-urlencode 'username=admin' --data-urlencode 'password=short')"
+[[ "$code" != "413" ]] && ok "正常大小的登录表单未被误拒" || fail "正常大小的登录表单被误拒"
+# 并发登录：口令校验有并发闸门（防止几十个并发把 CPU 打满），
+# 但闸门不能把正常登录也拒掉。
+# 注意：这里不能写裸 wait——那会把后台的服务进程也一起等住，脚本永远不结束。
+# 必须只等这几个 curl 子进程。
+: >"$TMPDIR/concurrent.txt"
+cpids=""
+for _ in $(seq 1 8); do
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST "$BASE/login" \
+    -d 'username=admin&password=testpass123' >>"$TMPDIR/concurrent.txt" &
+  cpids="$cpids $!"
+done
+for p in $cpids; do wait "$p"; done
+bad="$(grep -c -v '^303$' "$TMPDIR/concurrent.txt" | tr -d ' ')"
+[[ "$bad" == "0" ]] && ok "8 个并发登录全部成功" || fail "并发登录有 ${bad} 个未成功"
 
 info "验证只读账号与撤权生效"
 CSRF="$(curl -s -b "$JAR" "$BASE/admins" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
@@ -325,6 +390,42 @@ if [[ "$(uname -s)" == "Linux" ]]; then
 else
   info "非 Linux 环境无法执行 headscale configtest，跳过写入链路（由远程测试覆盖）"
 fi
+
+info "验证配置与策略「校验不通过就不落盘」"
+# 旧实现是「先落盘、再校验」：校验没过的话坏配置已经躺在生产配置上了，
+# 界面还只提示一句「已保存但校验失败」。新流程必须是校验不过就不写。
+NETCSRF="$(curl -s -b "$JAR" "$BASE/network" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+[[ ${#NETCSRF} -ge 32 ]] && ok "网络页 CSRF 已下发" || fail "网络页缺少 CSRF"
+CFG_BEFORE="$(sha256sum "$TMPDIR/config.yaml" | cut -d' ' -f1)"
+curl -s -b "$JAR" -X POST "$BASE/network/config" \
+  --data-urlencode "csrf=${NETCSRF}" \
+  --data-urlencode 'config=listen_addr: 0.0.0.0:8080
+# 故意缺少 server_url：configtest 必然不通过' -o /dev/null
+CFG_AFTER="$(sha256sum "$TMPDIR/config.yaml" | cut -d' ' -f1)"
+[[ "$CFG_BEFORE" == "$CFG_AFTER" ]] && ok "坏配置校验不通过时原配置一字未动" || fail "坏配置被写进了配置文件"
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/net-badcfg.html"
+grep -q '校验未通过' "$TMPDIR/net-badcfg.html" && ok "页面提示「校验未通过」" || fail "页面没有提示校验未通过"
+grep -q '已保存并通过校验' "$TMPDIR/net-badcfg.html" && fail "坏配置却提示已保存" || ok "没有把坏配置说成已保存"
+# 候选文件必须被清掉，不能在配置目录里留垃圾。
+if ls "$TMPDIR"/.config-candidate.yaml >/dev/null 2>&1; then
+  fail "候选配置文件没有被清理"
+else
+  ok "候选配置文件已清理"
+fi
+
+# 策略：坏策略不落盘，好策略才写入。
+POL_BEFORE="$(sha256sum "$TMPDIR/policy.hujson" | cut -d' ' -f1)"
+curl -s -b "$JAR" -X POST "$BASE/network/acl" \
+  --data-urlencode "csrf=${NETCSRF}" \
+  --data-urlencode 'acl={"acls":[{"action":"accept"}' -o /dev/null
+POL_AFTER="$(sha256sum "$TMPDIR/policy.hujson" | cut -d' ' -f1)"
+[[ "$POL_BEFORE" == "$POL_AFTER" ]] && ok "坏策略校验不通过时原策略一字未动" || fail "坏策略被写进了策略文件"
+curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/net-badacl.html"
+grep -q '策略校验未通过' "$TMPDIR/net-badacl.html" && ok "页面提示「策略校验未通过」" || fail "页面没有提示策略校验未通过"
+curl -s -b "$JAR" -X POST "$BASE/network/acl" \
+  --data-urlencode "csrf=${NETCSRF}" \
+  --data-urlencode 'acl={"acls":[{"action":"accept","src":["10.0.0.0/8"],"dst":["10.0.0.1:22"]}]}' -o /dev/null
+grep -q '10.0.0.1:22' "$TMPDIR/policy.hujson" && ok "合法策略已写入策略文件" || fail "合法策略没有写入策略文件"
 
 info "验证网络与策略页（图形化表单）"
 curl -s -b "$JAR" "$BASE/network" -o "$TMPDIR/network.html"
@@ -573,6 +674,22 @@ JSON
 else
   info "非 Linux 环境无法执行 fake headscale，节点速度展示断言由远程测试覆盖"
 fi
+
+info "验证来源 IP 锁定（放在最后：锁定期间后续登录都会被拒）"
+# 每次换一个用户名：账号维度的延迟是按「来源 + 账号」记的，
+# 换名字才不会每一步都先等上几秒，几十次失败能很快跑完。
+locked=0
+for i in $(seq 1 45); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/login" \
+    -d "username=lock-probe-${i}&password=wrong")"
+  if [[ "$code" == "429" ]]; then locked=1; break; fi
+done
+[[ "$locked" == "1" ]] && ok "同一来源累计失败过多后被锁定（429）" || fail "累计失败过多仍未锁定"
+# 锁定期间连正确口令也要被拒：锁定必须真的挡住爆破，不能变成凭据探测器。
+code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/login" \
+  -d 'username=admin&password=testpass123')"
+[[ "$code" == "429" ]] && ok "锁定期间正确口令同样被拒（不泄露凭据是否正确）" \
+  || fail "锁定期间正确口令未被拒（${code}）"
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true

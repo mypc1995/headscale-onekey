@@ -166,6 +166,12 @@ Environment=HSA_LEGACY_JSON=${LEGACY_JSON}
 Environment=HSA_TEMPLATES=${INSTALL_DIR}/templates
 Environment=HSA_STATIC=${INSTALL_DIR}/static
 Environment=HSA_NODE_SPEED_TOKEN_FILE=${SPEED_TOKEN_FILE}
+# 登录限速按来源 IP 计数，共享出口（NAT / 公司统一出口）下一次误触就会把
+# 所有人一起锁住。把运维网段列成可信来源即可绕过限速：
+#   Environment=HSA_LOGIN_TRUSTED_IPS=192.168.1.0/24,10.8.0.5
+# 注意：管理界面不解析 X-Forwarded-For，认的是 TCP 连接的来源地址。
+# 放在反向代理后面时所有请求的来源都是代理自己——此时千万不要把代理的
+# IP（尤其 127.0.0.1）加进来，否则等于对全世界关闭限速。
 ExecStart=${BIN}
 Restart=on-failure
 RestartSec=3

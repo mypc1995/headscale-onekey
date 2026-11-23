@@ -546,40 +546,39 @@ func (a *App) saveACL(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
+	lang := langFrom(r)
 	content := r.FormValue("acl")
 	if strings.TrimSpace(content) == "" {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.aclRequired"))
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.aclRequired"))
 		return
 	}
-	if err := a.hs.SavePolicy(content, langFrom(r)); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
+	// 校验通过才落地：策略文件写坏了还留在盘上，headscale 下次启动会直接失败。
+	if err := a.hs.SavePolicyChecked(content, lang); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.aclInvalid", err.Error()))
 		return
 	}
-	if out, err := a.hs.Action("configtest", "-c", a.hs.Config); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.savedInvalid", err.Error(), out))
-		return
-	}
-	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.aclSaved"))
+	a.redirectWithFlash(w, r, "/network", tr(lang, "msg.aclSaved"))
 }
 
 func (a *App) saveConfig(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
+	lang := langFrom(r)
 	content := r.FormValue("config")
 	if strings.TrimSpace(content) == "" {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.configRequired"))
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.configRequired"))
 		return
 	}
-	if err := a.hs.SaveConfig(content); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.saveFail", err.Error()))
+	// 走「候选文件 → configtest → 备份 → 原子替换」的流程。
+	// 旧实现是先 SaveConfig 落盘、再 configtest：校验没过的话，坏配置
+	// 已经躺在生产配置上了，而且界面只提示一句「已保存但校验失败」——
+	// 管理员很可能以为已经改好了。
+	if _, err := a.hs.ApplyConfig(content, false, lang); err != nil {
+		a.redirectWithFlash(w, r, "/network", tr(lang, "msg.configInvalid", err.Error()))
 		return
 	}
-	if out, err := a.hs.Action("configtest", "-c", a.hs.Config); err != nil {
-		a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.savedInvalid", err.Error(), out))
-		return
-	}
-	a.redirectWithFlash(w, r, "/network", tr(langFrom(r), "msg.configSaved"))
+	a.redirectWithFlash(w, r, "/network", tr(lang, "msg.configSaved"))
 }
 
 func (a *App) saveDNS(w http.ResponseWriter, r *http.Request) {

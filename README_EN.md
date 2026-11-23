@@ -390,8 +390,22 @@ bash test-headscale-admin-tls.sh /usr/local/bin/headscale-admin
 
 - Passwords are stored with salted PBKDF2-HMAC-SHA256 (120,000 iterations).
 - Sessions use HttpOnly cookies, every form carries a CSRF token, and the readonly role cannot submit changes.
-- Failed logins are counted per account and per source IP: repeated failures make that account's logins progressively slower, and too many failures from one IP lock it out temporarily. Usernames that do not exist still pay the full key-derivation cost, so they cannot be enumerated by timing.
-- When an administrator demotes, disables or deletes an account, or changes its password, that account's live sessions are **revoked immediately** — revocation takes effect at once.
+- Failed logins are counted per `source IP + account name` and per source IP: repeated failures make that source's logins for that account progressively slower, and too many failures from one IP lock it out temporarily (30 failures, 2-minute lock). Usernames that do not exist still pay the full key-derivation cost, so they cannot be enumerated by timing.
+- A successful login clears only the `source IP + account name` counter, never the source IP total — otherwise an attacker could wash the throttle away by signing in once with their own valid account.
+- Login request bodies are capped at 64 KB (413 beyond that), and password verification runs behind a concurrency gate (CPU cores minus 2, at most 8 at a time) that returns 429 on timeout, so a burst of parallel logins cannot saturate the CPU of a machine that also runs the headscale control plane.
+- When an administrator demotes, disables or deletes an account, or changes its password, that account's live sessions are **revoked immediately** — revocation takes effect at once. `--reset-admin` revokes that account's sessions too.
+
+### Shared egress and trusted sources
+
+Login throttling counts per source IP. Everyone behind NAT, a corporate egress or a reverse proxy shares one address, so a single mistake locks out everybody at once. Two ways out:
+
+```bash
+# Treat the ops subnet as trusted: those sources neither accumulate failures nor get locked
+# Comma-separated; single IPs and CIDRs are both accepted
+Environment="HSA_LOGIN_TRUSTED_IPS=192.168.1.0/24,10.8.0.5"
+```
+
+Note: the admin UI does **not** parse `X-Forwarded-For`; it uses the TCP peer address. Behind a reverse proxy every request appears to come from the proxy itself — never add the proxy's address (especially `127.0.0.1`) to the trusted list, or you have effectively disabled throttling for the whole internet.
 
 Admin accounts and sessions live in SQLite (`/var/lib/headscale-admin/headscale-admin.db`, mode 0600), so logins survive service restarts. On first startup, a legacy `admins.json` is migrated automatically and renamed to `admins.json.migrated`; existing passwords keep working. The SQLite driver is pure Go (`modernc.org/sqlite`), so no gcc or CGO is needed to build.
 

@@ -232,7 +232,17 @@ func (s *AuthStore) EnsureAdmin(username, password string, lang ...string) error
 		 ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, salt=excluded.salt,
 		   iterations=excluded.iterations, role='admin', disabled=0`,
 		username, h, salt, iter, "admin", time.Now().Unix())
-	return err
+	if err != nil {
+		return err
+	}
+	// 改密后必须吊销该账号已有的会话。
+	//
+	// --reset-admin 是应急处置入口：怀疑口令泄露时用它换新口令。
+	// 如果不吊销，攻击者手里那张旧 Cookie 还能继续用满 8 小时，
+	// 「改密」就等于没改。降权（SetRole）和改密（ChangePassword）
+	// 都已经做了吊销，这里是最后一条漏掉的路径。
+	s.revokeSessions(username)
+	return nil
 }
 
 func (s *AuthStore) Exists(username string) bool {
