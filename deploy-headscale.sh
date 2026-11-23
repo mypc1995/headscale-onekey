@@ -53,6 +53,10 @@ BASE_DOMAIN=""       # MagicDNS 根域；v0.29.7 强制要求不能与 server_ur
 LISTEN_PORT=""       # HTTP 模式下从 -u URL 提取的监听端口（避免与已占用端口冲突）
 PUBLIC_IP=""
 CERTBOT_BIN=""
+LOCAL_BINARY=""      # 本地已有的 headscale 二进制（离线部署用，不再从 GitHub 下载）
+LOCAL_CONFIG=""      # 本地已有的配置示例（离线部署用）
+PREFIX_V4=""         # 虚拟网段 prefixes.v4（默认用官方示例的 100.64.0.0/10）
+PUBLIC_IP_OVERRIDE="" # 显式指定公网 IP（NAT 后面自动探测会拿到内网地址）
 
 # ===================== 输出辅助 =====================
 C_RESET=$'\033[0m'; C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'; C_RED=$'\033[1;31m'; C_BLUE=$'\033[1;34m'
@@ -75,7 +79,17 @@ Headscale 一键部署脚本（支持 HTTPS + 定时证书更新）
       --base-domain DOM  MagicDNS 根域（默认自动派生为 server_url 的子域，避免冲突）
       --derp             启用内置 DERP 中继（公网环境建议）
   -v, --version VER      指定 headscale 版本，默认 0.29.7
+      --binary PATH      使用本地已有的 headscale 二进制（离线部署：机器连不上 GitHub 时用）
+      --config PATH      使用本地已有的配置示例（离线部署时用）
+      --prefix-v4 CIDR   虚拟网段，默认官方示例的 100.64.0.0/10，例如 10.0.0.0/24
+      --public-ip IP     显式指定公网 IP（NAT 后面自动探测会拿到内网地址，内置 DERP 需要）
   -h, --help             显示帮助
+
+离线部署（GitHub 不可达时，在能上网的机器上备好文件再上传）：
+  1. 下载二进制 headscale_0.29.7_linux_amd64 与配置示例 config-example.yaml
+  2. scp 到目标机，然后：
+     sudo bash deploy-headscale.sh -u http://<公网IP>:18080 --tls-mode none \
+          --binary ./headscale_0.29.7_linux_amd64 --config ./config-example.yaml
 
 部署后证书管理:
   headscale-cert status   查看证书到期时间
@@ -94,6 +108,10 @@ while [[ $# -gt 0 ]]; do
     --base-domain) BASE_DOMAIN="${2:-}"; shift 2 ;;
     -v|--version)  HS_VERSION="${2:-}"; shift 2 ;;
     --derp)        ENABLE_DERP="yes"; shift ;;
+    --binary)      LOCAL_BINARY="${2:-}"; shift 2 ;;
+    --config)      LOCAL_CONFIG="${2:-}"; shift 2 ;;
+    --prefix-v4)   PREFIX_V4="${2:-}"; shift 2 ;;
+    --public-ip)   PUBLIC_IP_OVERRIDE="${2:-}"; shift 2 ;;
     -h|--help)     usage ;;
     *)             error "未知参数: $1 （使用 --help 查看用法）" ;;
   esac
@@ -197,6 +215,9 @@ fi
 log "MagicDNS base_domain: ${BASE_DOMAIN}"
 
 if [[ "$TLS_MODE" == "certbot" && -z "$ACME_EMAIL" ]]; then error "certbot 模式需要 --email 指定 ACME 邮箱"; fi
+# 云主机的网卡上是内网地址，自动探测到的「公网 IP」往往不对（NAT 后面），
+# 内置 DERP 要把这个地址告诉客户端，指定 --public-ip 才能填对。
+[[ -n "$PUBLIC_IP_OVERRIDE" ]] && PUBLIC_IP="$PUBLIC_IP_OVERRIDE"
 [[ -z "$PUBLIC_IP" ]] && PUBLIC_IP="$(detect_public_ip)"
 
 echo
@@ -238,12 +259,18 @@ install_certbot() {
 }
 
 # ===================== 下载二进制 =====================
-step "下载 headscale v${HS_VERSION} (linux_${HS_ARCH})"
-DL_URL="https://github.com/juanfont/headscale/releases/download/v${HS_VERSION}/headscale_${HS_VERSION}_linux_${HS_ARCH}"
-TMP_BIN="$(mktemp)"
-curl -fL --retry 3 --progress-bar "$DL_URL" -o "$TMP_BIN" || error "下载失败: $DL_URL"
-install -m 0755 "$TMP_BIN" "$INSTALL_BIN"
-rm -f "$TMP_BIN"
+if [[ -n "$LOCAL_BINARY" ]]; then
+  step "安装本地 headscale 二进制 ${LOCAL_BINARY}（离线部署）"
+  [[ -f "$LOCAL_BINARY" ]] || error "本地二进制不存在: ${LOCAL_BINARY}"
+  install -m 0755 "$LOCAL_BINARY" "$INSTALL_BIN"
+else
+  step "下载 headscale v${HS_VERSION} (linux_${HS_ARCH})"
+  DL_URL="https://github.com/juanfont/headscale/releases/download/v${HS_VERSION}/headscale_${HS_VERSION}_linux_${HS_ARCH}"
+  TMP_BIN="$(mktemp)"
+  curl -fL --retry 3 --progress-bar "$DL_URL" -o "$TMP_BIN" || error "下载失败: $DL_URL"
+  install -m 0755 "$TMP_BIN" "$INSTALL_BIN"
+  rm -f "$TMP_BIN"
+fi
 "$INSTALL_BIN" version | head -5
 
 # ===================== 用户与目录 =====================
@@ -263,12 +290,19 @@ log "用户/目录就绪"
 
 # ===================== 生成配置 =====================
 # 关键：v0.29.x 使用「扁平键」，必须从对应 tag 下载示例；main 分支是嵌套键，不可用。
-step "生成配置文件 ${CONFIG_FILE}（v${HS_VERSION} 对应 tag 的官方示例）"
-EXAMPLE_URL="https://raw.githubusercontent.com/juanfont/headscale/v${HS_VERSION}/config-example.yaml"
-curl -fsSL --retry 3 --retry-delay 2 "$EXAMPLE_URL" -o "$CONFIG_FILE" || error "下载配置示例失败: $EXAMPLE_URL"
+if [[ -n "$LOCAL_CONFIG" ]]; then
+  step "使用本地配置示例 ${LOCAL_CONFIG}（离线部署）"
+  [[ -f "$LOCAL_CONFIG" ]] || error "本地配置示例不存在: ${LOCAL_CONFIG}"
+  cp "$LOCAL_CONFIG" "$CONFIG_FILE"
+  log "配置来源: 本地文件 ${LOCAL_CONFIG}"
+else
+  step "生成配置文件 ${CONFIG_FILE}（v${HS_VERSION} 对应 tag 的官方示例）"
+  EXAMPLE_URL="https://raw.githubusercontent.com/juanfont/headscale/v${HS_VERSION}/config-example.yaml"
+  curl -fsSL --retry 3 --retry-delay 2 "$EXAMPLE_URL" -o "$CONFIG_FILE" || error "下载配置示例失败: $EXAMPLE_URL"
+  log "配置来源: ${EXAMPLE_URL}"
+fi
 grep -q '^server_url:' "$CONFIG_FILE" || error "配置示例格式异常（未找到 server_url 扁平键），请确认版本 v${HS_VERSION}"
 grep -q '^tls_letsencrypt_hostname:' "$CONFIG_FILE" || error "配置示例缺少 tls_letsencrypt_hostname，版本可能不兼容"
-log "配置来源: ${EXAMPLE_URL}"
 
 # 顶层扁平键替换（幂等：存在则替换，否则追加）
 set_key() { # set_key <key> <value>
@@ -291,6 +325,20 @@ else
   error "配置示例缺少 dns.base_domain，版本可能不兼容"
 fi
 log "已设置 MagicDNS base_domain: ${BASE_DOMAIN}"
+
+# prefixes.v4 是 prefixes: 块内的嵌套键（虚拟网段）。
+# 必须限定在 prefixes 块内替换：直接 sed 全文替换会把别的块里的同名 v4 键也改掉。
+if [[ -n "$PREFIX_V4" ]]; then
+  grep -qE '^prefixes:' "$CONFIG_FILE" || error "配置示例缺少 prefixes 块，版本可能不兼容"
+  awk -v v="$PREFIX_V4" '
+    /^prefixes:[[:space:]]*$/ { inblk=1; print; next }
+    inblk && /^[^[:space:]#]/ { inblk=0 }
+    inblk && /^[[:space:]]+v4:/ { sub(/v4:.*/, "v4: " v); print; next }
+    { print }
+  ' "$CONFIG_FILE" >"$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  grep -qE '^  v4: '"${PREFIX_V4}"'$' "$CONFIG_FILE" || error "虚拟网段写入失败: ${PREFIX_V4}"
+  log "已设置虚拟网段 prefixes.v4: ${PREFIX_V4}"
+fi
 
 case "$TLS_MODE" in
   acme)

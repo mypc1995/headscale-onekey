@@ -16,9 +16,14 @@ ADMIN_PASS=""
 RESET_ADMIN="no"
 AUTO_PASS="no"
 PRESERVE_ADMIN="no"
+LOCAL_BINARY=""      # 本地已有的 headscale-admin 二进制（离线/低配机器部署用）
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_ROOT="$SCRIPT_DIR"
-[[ -f "$SRC_ROOT/main.go" ]] || SRC_ROOT="$SCRIPT_DIR/headscale-admin"
+# 仓库里源码在 headscale-admin/ 子目录；离线部署包里模板/静态与脚本同级。
+# 两种布局都要认，否则离线包会被误判成「找不到源码」。
+if [[ ! -f "$SRC_ROOT/main.go" && -d "$SCRIPT_DIR/headscale-admin/templates" ]]; then
+  SRC_ROOT="$SCRIPT_DIR/headscale-admin"
+fi
 INSTALL_DIR="/opt/headscale-admin"
 DATA_DIR="/var/lib/headscale-admin"
 DB_FILE="${DATA_DIR}/headscale-admin.db"
@@ -43,7 +48,14 @@ usage() {
   --reset-admin         重置管理员密码（会覆盖该用户旧密码）
   --allow-cidr CIDR     仅允许指定网段访问 Web UI
   --no-firewall         不修改防火墙
+  --binary PATH         使用本地已有的 headscale-admin 二进制（跳过装 Go 与编译，
+                        适合配置低、连不上 GitHub 的机器：在别处编译好再上传）
   -h, --help            显示帮助
+
+离线部署示例:
+  # 在能上网的机器上： CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o headscale-admin .
+  # scp headscale-admin templates/ static/ deploy-headscale-admin.sh 服务器:~/
+  # 服务器上： sudo bash deploy-headscale-admin.sh --binary ./headscale-admin
 EOF
   exit 0
 }
@@ -56,6 +68,7 @@ while [[ $# -gt 0 ]]; do
     --reset-admin) RESET_ADMIN="yes"; shift ;;
     --allow-cidr)  ALLOW_CIDR="${2:-}"; shift 2 ;;
     --no-firewall) NO_FIREWALL="yes"; shift ;;
+    --binary)      LOCAL_BINARY="${2:-}"; shift 2 ;;
     -h|--help)     usage ;;
     *)             error "未知参数: $1" ;;
   esac
@@ -65,7 +78,13 @@ done
 command -v systemctl >/dev/null 2>&1 || error "未检测到 systemd"
 command -v curl >/dev/null 2>&1 || error "缺少 curl"
 command -v openssl >/dev/null 2>&1 || error "缺少 openssl"
-[[ -f "$SRC_ROOT/main.go" ]] || error "未找到源码 main.go，请在仓库目录运行"
+if [[ -n "$LOCAL_BINARY" ]]; then
+  # 离线/低配机器：不需要源码，但资源（模板与静态文件）必须一起上传
+  [[ -d "$SRC_ROOT/templates" && -d "$SRC_ROOT/static" ]] \
+    || error "未找到 templates/ 与 static/ 目录，请把仓库里的 headscale-admin 目录一起上传"
+else
+  [[ -f "$SRC_ROOT/main.go" ]] || error "未找到源码 main.go，请在仓库目录运行"
+fi
 
 # 已有管理员且不是重置时，保留原密码
 if [[ -f "$DB_FILE" || -f "$LEGACY_JSON" ]] && [[ "$RESET_ADMIN" != "yes" ]]; then
@@ -90,27 +109,37 @@ else
   fi
 fi
 
-step "安装编译依赖（Go + GCC）"
-if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
-  (dnf install -y golang gcc 2>/dev/null || yum install -y golang gcc) >/dev/null 2>&1 || error "安装 Go/GCC 失败"
-elif command -v apt >/dev/null 2>&1; then
-  apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq golang gcc >/dev/null 2>&1 || error "安装 Go/GCC 失败"
-fi
-go version && gcc --version | head -1
+if [[ -n "$LOCAL_BINARY" ]]; then
+  step "安装本地 headscale-admin 二进制 ${LOCAL_BINARY}（跳过编译）"
+  [[ -f "$LOCAL_BINARY" ]] || error "本地二进制不存在: ${LOCAL_BINARY}"
+  NEW_BIN="$LOCAL_BINARY"
+else
+  step "安装编译依赖（Go + GCC）"
+  if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+    (dnf install -y golang gcc 2>/dev/null || yum install -y golang gcc) >/dev/null 2>&1 || error "安装 Go/GCC 失败"
+  elif command -v apt >/dev/null 2>&1; then
+    apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq golang gcc >/dev/null 2>&1 || error "安装 Go/GCC 失败"
+  fi
+  go version && gcc --version | head -1
 
-step "编译 Headscale Admin"
-cd "$SRC_ROOT"
-# 纯 Go 的 SQLite 驱动，无需 gcc；国内机器默认走 goproxy.cn，可用 GOPROXY 覆盖。
-export GOPROXY="${GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct}"
-log "下载 Go 依赖（GOPROXY=${GOPROXY}）"
-go mod download >/dev/null 2>&1 || warn "go mod download 未完全成功，尝试直接编译"
-NEW_BIN="${BIN}.new"
-CGO_ENABLED=0 go build -o "$NEW_BIN" . >/dev/null 2>&1 || error "编译失败"
+  step "编译 Headscale Admin"
+  cd "$SRC_ROOT"
+  # 纯 Go 的 SQLite 驱动，无需 gcc；国内机器默认走 goproxy.cn，可用 GOPROXY 覆盖。
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct}"
+  log "下载 Go 依赖（GOPROXY=${GOPROXY}）"
+  go mod download >/dev/null 2>&1 || warn "go mod download 未完全成功，尝试直接编译"
+  NEW_BIN="${BIN}.new"
+  CGO_ENABLED=0 go build -o "$NEW_BIN" . >/dev/null 2>&1 || error "编译失败"
+fi
 mkdir -p "$INSTALL_DIR" "$DATA_DIR"
 systemctl stop headscale-admin >/dev/null 2>&1 || true
 install -m 0755 "$NEW_BIN" "$BIN"
-rm -f "$NEW_BIN"
-cp -r "$SRC_ROOT/templates" "$SRC_ROOT/static" "$INSTALL_DIR/"
+[[ "$NEW_BIN" != "$BIN" ]] && rm -f "$NEW_BIN"
+# 资源要覆盖式复制：cp -r 整目录到已存在的同名目录下会变成 templates/templates，
+# 旧文件原地不动，新文件根本没生效（升级部署时才会暴露）。
+mkdir -p "$INSTALL_DIR/templates" "$INSTALL_DIR/static"
+cp -r "$SRC_ROOT/templates/." "$INSTALL_DIR/templates/"
+cp -r "$SRC_ROOT/static/." "$INSTALL_DIR/static/"
 chmod 700 "$DATA_DIR"
 command -v restorecon >/dev/null 2>&1 && restorecon -RF "$INSTALL_DIR" "$BIN" >/dev/null 2>&1 || true
 log "二进制与资源已就绪: $BIN, $INSTALL_DIR"

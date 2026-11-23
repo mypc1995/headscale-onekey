@@ -118,10 +118,28 @@ sudo bash deploy-headscale.sh -u https://hs.example.com \
 | `--base-domain DOM` | MagicDNS base domain; derived automatically by default, rarely needs to be set |
 | `--derp` | Enable the built-in DERP relay; recommended for public deployments |
 | `-v, --version VER` | Pin a Headscale version; defaults to `0.29.7` |
+| `--prefix-v4 CIDR` | Tailnet address range; defaults to the upstream `100.64.0.0/10`, e.g. `10.0.0.0/24` |
+| `--public-ip IP` | Set the public IP explicitly; behind NAT auto-detection returns the private address, and the built-in DERP needs the public one |
+| `--binary PATH` | Use a local headscale binary instead of downloading it from GitHub (offline deployment) |
+| `--config PATH` | Use a local upstream config example instead of downloading it from GitHub (offline deployment) |
 
 After deployment, manage certificates with `headscale-cert status|renew|reload`.
 
 > **Note**: in v0.29.x, SIGHUP only reloads ACLs, not TLS certificates; use `renew` or restart the service to pick up new certificates.
+
+**Offline deployment** (for servers that cannot reach GitHub — common on mainland networks): fetch the files on a machine that can, then upload them.
+
+```bash
+# on a machine with internet access
+curl -fLO https://github.com/juanfont/headscale/releases/download/v0.29.7/headscale_0.29.7_linux_amd64
+curl -fsSL https://raw.githubusercontent.com/juanfont/headscale/v0.29.7/config-example.yaml -o config-example.yaml
+scp headscale_0.29.7_linux_amd64 config-example.yaml deploy-headscale.sh server:~/
+
+# on the server (GitHub is never contacted)
+sudo bash deploy-headscale.sh -u http://<public-IP>:18080 --tls-mode none \
+  --binary ~/headscale_0.29.7_linux_amd64 --config ~/config-example.yaml \
+  --prefix-v4 10.0.0.0/24 --public-ip <public-IP>
+```
 
 ### 2. Deploy the admin UI
 
@@ -144,6 +162,19 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 | Reset the password | Add `--reset-admin` |
 | Restrict sources | Add `--allow-cidr 192.168.1.0/24` |
 | Leave the firewall alone | Add `--no-firewall` |
+| Low-spec server or no GitHub access | Build elsewhere and pass `--binary ./headscale-admin` |
+
+Offline deployment (the admin UI is a single Go binary, so it only needs building once):
+
+```bash
+# on a machine with internet access (needs the repo's headscale-admin source tree)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o headscale-admin .
+scp headscale-admin deploy-headscale-admin.sh server:~/
+scp -r headscale-admin/templates headscale-admin/static server:~/
+
+# on the server (no Go, no compilation)
+sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
+```
 
 **Feature coverage**
 

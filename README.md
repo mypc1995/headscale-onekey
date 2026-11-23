@@ -118,10 +118,28 @@ sudo bash deploy-headscale.sh -u https://hs.example.com \
 | `--base-domain DOM` | MagicDNS 根域；默认自动派生，通常无需手动指定 |
 | `--derp` | 启用内置 DERP 中继，公网环境建议开启 |
 | `-v, --version VER` | 指定 Headscale 版本，默认 `0.29.7` |
+| `--prefix-v4 CIDR` | 虚拟网段，默认官方示例的 `100.64.0.0/10`，例如 `10.0.0.0/24` |
+| `--public-ip IP` | 显式指定公网 IP；NAT 后面自动探测会拿到内网地址，内置 DERP 需要它 |
+| `--binary PATH` | 用本地已有的 headscale 二进制，不从 GitHub 下载（离线部署） |
+| `--config PATH` | 用本地已有的官方配置示例，不从 GitHub 下载（离线部署） |
 
 部署后可用 `headscale-cert status|renew|reload` 查看和管理证书。
 
 > **注意**：v0.29.x 的 SIGHUP 只重载 ACL，不重载 TLS 证书；证书更新请使用 `renew` 或重启服务。
+
+**离线部署**（服务器连不上 GitHub 时——国内机器常见）：在能上网的机器上备好文件再上传。
+
+```bash
+# 在能上网的机器上
+curl -fLO https://github.com/juanfont/headscale/releases/download/v0.29.7/headscale_0.29.7_linux_amd64
+curl -fsSL https://raw.githubusercontent.com/juanfont/headscale/v0.29.7/config-example.yaml -o config-example.yaml
+scp headscale_0.29.7_linux_amd64 config-example.yaml deploy-headscale.sh 服务器:~/
+
+# 在服务器上（全程不访问 GitHub）
+sudo bash deploy-headscale.sh -u http://<公网IP>:18080 --tls-mode none \
+  --binary ~/headscale_0.29.7_linux_amd64 --config ~/config-example.yaml \
+  --prefix-v4 10.0.0.0/24 --public-ip <公网IP>
+```
 
 ### 2. 部署管理界面
 
@@ -144,6 +162,19 @@ sudo bash deploy-headscale-admin.sh --port 3001 \
 | 重置密码 | 加 `--reset-admin` |
 | 限制来源 | 加 `--allow-cidr 192.168.1.0/24` |
 | 不改防火墙 | 加 `--no-firewall` |
+| 服务器配置低 / 连不上 GitHub | 在别处编译好再传，用 `--binary ./headscale-admin` |
+
+离线部署（管理界面是 Go 单二进制，可以只在别处编译一次）：
+
+```bash
+# 在能上网的机器上（需要仓库里的 headscale-admin 源码目录）
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o headscale-admin .
+scp headscale-admin deploy-headscale-admin.sh 服务器:~/
+scp -r headscale-admin/templates headscale-admin/static 服务器:~/
+
+# 在服务器上（不装 Go、不编译）
+sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
+```
 
 **功能覆盖**
 
