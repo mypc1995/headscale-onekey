@@ -159,6 +159,7 @@
   var memThreshold = parseFloat(root.getAttribute('data-mem')) || 90;
   var rows = document.getElementById('node-rows');
   var routesLabel = rows ? (rows.getAttribute('data-routes') || (isEn ? 'Routes' : '路由')) : '';
+  var pendingLabel = rows ? (rows.getAttribute('data-pending') || (isEn ? 'Pending' : '待批')) : '';
   var speedNA = rows ? (rows.getAttribute('data-speed-na') || '') : '';
 
   function setText(id, v) {
@@ -279,6 +280,9 @@
     var routes = document.createElement('span');
     routes.className = 'muted';
     routes.textContent = routesLabel + ' ' + n.approved_routes + ' / ' + n.available_routes;
+    if (n.pending_routes) {
+      routes.textContent += ' · ' + pendingLabel + ' ' + n.pending_routes;
+    }
     tagsRoutes.appendChild(routes);
     tr.appendChild(tagsRoutes);
     return tr;

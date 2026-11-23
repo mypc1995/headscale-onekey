@@ -33,6 +33,7 @@ type NodeStat struct {
 	Tags            []string  `json:"tags"`
 	ApprovedRoutes  int       `json:"approved_routes"`
 	AvailableRoutes int       `json:"available_routes"`
+	PendingRoutes   int       `json:"pending_routes"`
 	Register        string    `json:"register"`
 
 	// 实时网速（KB/s，与实时网速面板的口径一致）。SpeedAvail=false 表示没有可用数据源，前端显示占位。
@@ -377,6 +378,7 @@ func nodeStatFromMap(item map[string]any, now time.Time) NodeStat {
 		Tags:            stringList(item["tags"]),
 		ApprovedRoutes:  len(asSlice(item["approved_routes"])),
 		AvailableRoutes: len(asSlice(item["available_routes"])),
+		PendingRoutes:   len(pendingRoutes(stringList(item["available_routes"]), stringList(item["approved_routes"]))),
 		Register:        str(item["register_method"]),
 	}
 	n.ID, _ = strconv.ParseUint(strings.Trim(fmt.Sprint(item["id"]), `"`), 10, 64)

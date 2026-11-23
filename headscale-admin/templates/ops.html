@@ -57,7 +57,7 @@
   <div class="table-wrap" id="node-table" {{if not .Data.Nodes.Nodes}}hidden{{end}}>
     <table>
       <thead><tr><th>{{t .Lang "nodeMon.node"}}</th><th>{{t .Lang "nodeMon.user"}}</th><th>{{t .Lang "nodeMon.ip"}}</th><th>{{t .Lang "nodeMon.status"}}</th><th>{{t .Lang "nodeMon.speed"}}</th><th>{{t .Lang "nodeMon.lastSeen"}}</th><th>{{t .Lang "nodeMon.client"}}</th><th>{{t .Lang "nodeMon.expiry"}}</th><th>{{t .Lang "nodeMon.tagsRoutes"}}</th></tr></thead>
-      <tbody id="node-rows" data-routes="{{t .Lang "nodeMon.routes"}}" data-speed-na="{{t .Lang "nodeMon.speedNA"}}">
+      <tbody id="node-rows" data-routes="{{t .Lang "nodeMon.routes"}}" data-pending="{{t .Lang "nodeMon.pendingRoutes"}}" data-speed-na="{{t .Lang "nodeMon.speedNA"}}">
         {{range .Data.Nodes.Nodes}}<tr>
           <td class="node-name"><b>{{.Name}}</b><div class="muted small">#{{.ID}}</div></td>
           <td class="small">{{.User}}</td>

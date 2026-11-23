@@ -82,11 +82,18 @@ func (a *App) nodesPage(w http.ResponseWriter, r *http.Request) {
 	d := nodesData{Nodes: []map[string]any{}, Routes: []map[string]any{}}
 	if v, err := a.hs.Nodes(); err == nil {
 		d.Nodes = v
+		// 待批准 = 节点公告的全部路由 − 已批准的路由。
+		// 审批队列只放还有待批准路由的节点：批完之后这一行就从队列里消失，
+		// 不会一直挂在「待审批」里。
+		for _, n := range v {
+			pending := pendingRoutes(stringList(n["available_routes"]), stringList(n["approved_routes"]))
+			n["pending_routes"] = pending
+			if len(pending) > 0 {
+				d.Routes = append(d.Routes, n)
+			}
+		}
 	} else {
 		a.sessions.SetFlash(sessionFrom(r).Token, tr(langFrom(r), "msg.readNodesFail", err.Error()))
-	}
-	if v, err := a.hs.Routes(); err == nil {
-		d.Routes = v
 	}
 	a.render(w, r, "nodes", d)
 }
@@ -367,9 +374,40 @@ func (a *App) nodeApprove(w http.ResponseWriter, r *http.Request) {
 		a.redirectWithFlash(w, r, "/nodes", err.Error())
 		return
 	}
+	want, err := parseRouteList(r.FormValue("routes"))
+	if err != nil {
+		a.redirectWithFlash(w, r, "/nodes", err.Error())
+		return
+	}
 	a.doAction(w, r, "/nodes", func() (string, error) {
-		return a.hs.Action("nodes", "approve-routes", "-i", str(id), "-r", r.FormValue("routes"), "--force")
+		// headscale 的 approve-routes 是全量覆盖：只提交本次新批的路由，
+		// 反而会把之前批准的抹掉。所以提交前先跟节点当前的已批准集合取并集。
+		final, err := a.approvedRoutesOf(id, want)
+		if err != nil {
+			return "", err
+		}
+		return a.hs.Action("nodes", "approve-routes", "-i", str(id), "-r", strings.Join(final, ","), "--force")
 	})
+}
+
+// approvedRoutesOf 取节点当前已批准的路由，与本次要批准的合并成最终集合。
+// 节点读不到时按「只有本次提交的路由」处理，不阻断审批。
+func (a *App) approvedRoutesOf(id uint64, want []string) ([]string, error) {
+	nodes, err := a.hs.Nodes()
+	if err != nil {
+		return mergeRouteLists(nil, want), nil
+	}
+	return mergeRouteLists(approvedRoutesOfNode(nodes, id), want), nil
+}
+
+// approvedRoutesOfNode 从节点列表里取出指定节点已批准的路由。
+func approvedRoutesOfNode(nodes []map[string]any, id uint64) []string {
+	for _, n := range nodes {
+		if nodeIDOf(n) == id {
+			return stringList(n["approved_routes"])
+		}
+	}
+	return nil
 }
 
 // normalizeExpiry 只接受下拉里的固定取值，把「长期」映射成 100 年。

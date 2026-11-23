@@ -10,7 +10,16 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_ROOT="$SCRIPT_DIR"
-[[ -f "$SRC_ROOT/main.go" ]] || SRC_ROOT="$SCRIPT_DIR/headscale-admin"
+# 部署版验证：HSA_DEPLOY_BIN 指向线上真实二进制，HSA_DEPLOY_ASSETS 指向线上
+# 真实资源目录（如 /opt/headscale-admin）。此时不编译、不需要 Go，
+# 验的就是线上正在跑的那一份，而不是本地重新编出来的副本。
+DEPLOY_MODE=0
+if [[ -n "${HSA_DEPLOY_BIN:-}" ]]; then
+  DEPLOY_MODE=1
+  SRC_ROOT="${HSA_DEPLOY_ASSETS:-$SCRIPT_DIR}"
+elif [[ ! -f "$SRC_ROOT/main.go" ]]; then
+  SRC_ROOT="$SCRIPT_DIR/headscale-admin"
+fi
 TMPDIR="$(mktemp -d)"
 SERVER_PID=""
 trap 'if [[ -n "$SERVER_PID" ]]; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$TMPDIR"' EXIT
@@ -27,17 +36,30 @@ echo " 临时目录: $TMPDIR"
 echo "=========================================="
 
 info "检查依赖与源码"
-for c in go curl; do
-  command -v "$c" >/dev/null 2>&1 || { fail "缺少依赖: $c"; exit 1; }
-done
-[[ -f "$SRC_ROOT/main.go" ]] || { fail "未找到源码: $SRC_ROOT/main.go"; exit 1; }
-ok "依赖与源码就绪"
+if [[ "$DEPLOY_MODE" == "1" ]]; then
+  command -v curl >/dev/null 2>&1 || { fail "缺少依赖: curl"; exit 1; }
+  [[ -x "$HSA_DEPLOY_BIN" ]] || { fail "线上二进制不存在或不可执行: $HSA_DEPLOY_BIN"; exit 1; }
+  [[ -d "$SRC_ROOT/templates" ]] || { fail "线上资源目录缺失: $SRC_ROOT/templates"; exit 1; }
+  ok "部署版模式：使用线上二进制 $HSA_DEPLOY_BIN 与线上资源 $SRC_ROOT"
+else
+  for c in go curl; do
+    command -v "$c" >/dev/null 2>&1 || { fail "缺少依赖: $c"; exit 1; }
+  done
+  [[ -f "$SRC_ROOT/main.go" ]] || { fail "未找到源码: $SRC_ROOT/main.go"; exit 1; }
+  ok "依赖与源码就绪"
+fi
 
 info "编译与静态检查"
-cd "$SRC_ROOT"
-go vet ./... >"$TMPDIR/vet.log" 2>&1 || { fail "go vet 失败"; tail -20 "$TMPDIR/vet.log"; exit 1; }
-go build -o "$TMPDIR/hsa" . >"$TMPDIR/build.log" 2>&1 || { fail "编译失败"; tail -30 "$TMPDIR/build.log"; exit 1; }
-ok "go vet 与编译通过"
+if [[ "$DEPLOY_MODE" == "1" ]]; then
+  # 不在验证机上重新编译：用的就是线上那一份二进制。
+  cp "$HSA_DEPLOY_BIN" "$TMPDIR/hsa"
+  ok "已复制线上二进制（不在本地重新编译）"
+else
+  cd "$SRC_ROOT"
+  go vet ./... >"$TMPDIR/vet.log" 2>&1 || { fail "go vet 失败"; tail -20 "$TMPDIR/vet.log"; exit 1; }
+  go build -o "$TMPDIR/hsa" . >"$TMPDIR/build.log" 2>&1 || { fail "编译失败"; tail -30 "$TMPDIR/build.log"; exit 1; }
+  ok "go vet 与编译通过"
+fi
 
 grep -q 'data-theme="dark"' "$SRC_ROOT/static/app.css" && ok "多主题样式已内置" || fail "缺少主题样式"
 grep -q 'fetch(' "$SRC_ROOT/static/app.js" && ok "实时网速刷新脚本就绪" || fail "缺少网速刷新脚本"
@@ -54,6 +76,10 @@ argval() {
   done
   return 1
 }
+# 记录每次调用的参数：断言 CLI 到底收到了什么（路由审批要校验 -r 的取值）。
+if [ -n "${FAKE_CMD_LOG:-}" ]; then
+  printf '%s\n' "$*" >>"$FAKE_CMD_LOG"
+fi
 case "$*" in
   *"list-routes"*) echo '[]' ;;
   *"users list"*) echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
@@ -141,7 +167,8 @@ awk -v p="$POLICY_PATH" '
 printf '%s\n' '{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}' >"$TMPDIR/policy.hujson"
 
 PORT=$((39000 + RANDOM % 1000))
-HSA_HEADSCALE_BIN="$HS_BIN" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" "$TMPDIR/hsa" \
+: >"$TMPDIR/hs-calls.log"
+HSA_HEADSCALE_BIN="$HS_BIN" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" FAKE_CMD_LOG="$TMPDIR/hs-calls.log" "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
   -node-speed-token test-speed-token \
   >"$TMPDIR/server.log" 2>&1 &
@@ -674,6 +701,42 @@ JSON
 else
   info "非 Linux 环境无法执行 fake headscale，节点速度展示断言由远程测试覆盖"
 fi
+
+info "验证路由审批（待审批集合 + 全量覆盖语义）"
+# headscale 的 available_routes 含已批准的路由，所以「待审批」必须做差集：
+# 节点 21 有一条已批准（10.0.0.0/8）和一条待批准（192.168.1.0/24）；
+# 节点 22 全部已批准，不该再出现在审批队列里。
+cat >"$TMPDIR/nodes.json" <<'JSON'
+[{"id":21,"name":"router","user":{"name":"default"},"ip_addresses":["100.64.0.9"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["10.0.0.0/8"],"available_routes":["10.0.0.0/8","192.168.1.0/24"]},{"id":22,"name":"router2","user":{"name":"default"},"ip_addresses":["100.64.0.10"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["192.168.2.0/24"],"available_routes":["192.168.2.0/24"]}]
+JSON
+curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-page.html"
+# 路由审批卡片是页面最后一个 section，从它的标题往后截取，
+# 免得把节点列表里的同名内容误判成审批队列里的内容。
+awk '/路由审批/{f=1} f' "$TMPDIR/nodes-page.html" >"$TMPDIR/route-section.html"
+grep -q '192.168.1.0/24' "$TMPDIR/route-section.html" && ok "待批准的路由出现在审批队列" || fail "待批准的路由没有出现在审批队列"
+grep -q '192.168.2.0/24' "$TMPDIR/route-section.html" && fail "全部已批准的节点仍留在审批队列" || ok "全部已批准的节点已移出审批队列"
+grep -q 'name="routes"[^>]*value="192.168.1.0/24"' "$TMPDIR/route-section.html" && ok "审批表单预填的是待批准路由" || fail "审批表单预填的不是待批准路由"
+grep -q 'name="routes"[^>]*value="10.0.0.0/8"' "$TMPDIR/route-section.html" && fail "审批表单误填了已批准的路由" || ok "审批表单没有误填已批准的路由"
+
+# 审批：CLI 必须收到「原有已批准 ∪ 本次提交」。headscale 的 approve-routes
+# 是全量覆盖语义，只提交新路由会把之前批准的抹掉。
+: >"$TMPDIR/hs-calls.log"
+CSRF_N="$(curl -s -b "$JAR" "$BASE/nodes" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+curl -s -b "$JAR" -X POST "$BASE/nodes/approve" -d "csrf=${CSRF_N}&id=21&routes=192.168.1.0/24" -o /dev/null
+grep -q -- '-r 10.0.0.0/8,192.168.1.0/24' "$TMPDIR/hs-calls.log" && ok "审批带上原有已批准路由（全量覆盖语义）" || fail "审批没有带上原有已批准路由"
+
+# 审批生效后（模拟 headscale 把路由挪进 approved），该路由必须从队列里消失。
+cat >"$TMPDIR/nodes.json" <<'JSON'
+[{"id":21,"name":"router","user":{"name":"default"},"ip_addresses":["100.64.0.9"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["10.0.0.0/8","192.168.1.0/24"],"available_routes":["10.0.0.0/8","192.168.1.0/24"]}]
+JSON
+curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-page2.html"
+awk '/路由审批/{f=1} f' "$TMPDIR/nodes-page2.html" >"$TMPDIR/route-section2.html"
+grep -q '192.168.1.0/24' "$TMPDIR/route-section2.html" && fail "批准后该路由仍留在审批队列" || ok "批准后该路由已从审批队列移除"
+grep -q '没有待审批的路由' "$TMPDIR/route-section2.html" && ok "队列清空后给出空状态提示" || fail "队列清空后缺少空状态提示"
+
+# 仪表盘那一格现在统计的是待审批路由数（原来统计的是有路由的节点数）。
+curl -s -b "$JAR" "$BASE/" -o "$TMPDIR/dash.html"
+grep -q '待审批路由</div><div class="stat-value">0</div>' "$TMPDIR/dash.html" && ok "仪表盘待审批路由数已归零" || fail "仪表盘待审批路由数不对"
 
 info "验证来源 IP 锁定（放在最后：锁定期间后续登录都会被拒）"
 # 每次换一个用户名：账号维度的延迟是按「来源 + 账号」记的，

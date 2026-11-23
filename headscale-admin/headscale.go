@@ -132,18 +132,6 @@ func (c *HSClient) Nodes() ([]map[string]any, error) {
 	return out, nil
 }
 
-func (c *HSClient) Routes() ([]map[string]any, error) {
-	v, err := c.runJSON("nodes", "list-routes")
-	if err != nil {
-		return nil, err
-	}
-	out := []map[string]any{}
-	for _, item := range asSlice(v) {
-		out = append(out, asMap(item))
-	}
-	return out, nil
-}
-
 func (c *HSClient) PreauthKeys() ([]map[string]any, error) {
 	v, err := c.runJSON("preauthkeys", "list")
 	if err != nil {

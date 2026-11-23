@@ -560,9 +560,9 @@ func clientIP(r *http.Request) string {
 }
 
 type dashboardData struct {
-	Users, Nodes, Online, Routes, PreauthKeys, APIKeys int
-	Service, Version, Cert                             string
-	Recent                                             []map[string]any
+	Users, Nodes, Online, PendingRoutes, PreauthKeys, APIKeys int
+	Service, Version, Cert                                    string
+	Recent                                                    []map[string]any
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -579,14 +579,13 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			if strings.EqualFold(str(n["online"]), "true") {
 				d.Online++
 			}
+			// 待审批路由 = 公告的全部路由 − 已批准的路由。
+			d.PendingRoutes += len(pendingRoutes(stringList(n["available_routes"]), stringList(n["approved_routes"])))
 		}
 		d.Recent = nodes
 		if len(d.Recent) > 6 {
 			d.Recent = d.Recent[:6]
 		}
-	}
-	if v, err := a.hs.Routes(); err == nil {
-		d.Routes = len(v)
 	}
 	if v, err := a.hs.PreauthKeys(); err == nil {
 		d.PreauthKeys = len(v)

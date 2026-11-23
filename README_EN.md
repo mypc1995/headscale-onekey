@@ -180,8 +180,8 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 
 | Page | Contents |
 | --- | --- |
-| Overview | Users, nodes, online nodes, routes, keys, service status, certificate expiry |
-| Nodes | List, rename, expire, delete, tags, route approval |
+| Overview | Users, nodes, online nodes, pending routes, keys, service status, certificate expiry |
+| Nodes | List, rename, expire, delete, tags, route approval (only routes that are not approved yet are queued, and a route leaves the queue once it is approved) |
 | Users | Create, rename, delete, with display name and email support |
 | Keys & access | Generate/expire/delete pre-auth keys and API keys, plus a one-click client join command |
 | Network & policy | DNS / MagicDNS, DERP, ACL policy, full config editing |
