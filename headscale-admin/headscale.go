@@ -481,8 +481,9 @@ func (c *HSClient) SavePolicy(content string, lang ...string) error {
 // 文件坏掉时 headscale 启动会直接失败，等于留了一颗地雷。
 //
 // 现在改成：先写候选文件 → 用 headscale policy check 校验 → 通过才备份并原子替换。
-// 校验用 headscale 自带的 policy check：它解析 HuJSON，还会核对策略里引用的
-// 用户/组是否真实存在，比自己判 JSON 语法可靠得多。
+// 校验用 headscale 自带的 policy check：它解析 HuJSON，并校验策略结构与用户名的
+// 写法（实测引用了没有 @ 的用户名会被拒：username must contain @），
+// 比自己判 JSON 语法可靠得多——毕竟它就是将来要执行这份策略的那个程序。
 func (c *HSClient) SavePolicyChecked(content string, lang ...string) error {
 	L := reqLang(lang)
 	p := c.PolicyPath()
