@@ -570,6 +570,58 @@ func checkPastedPair(certPEM, keyPEM string) (field, code string) {
 	if _, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM)); err != nil {
 		return "cert_pem", "cfg.err.pairMismatch"
 	}
+	if field, code := checkCertChain(certPEM); field != "" {
+		return field, code
+	}
+	return "", ""
+}
+
+// parseCertChain 按出现顺序解析 PEM 里的全部证书。
+func parseCertChain(certPEM string) []*x509.Certificate {
+	out := []*x509.Certificate{}
+	rest := []byte(certPEM)
+	for {
+		var blk *pem.Block
+		blk, rest = pem.Decode(rest)
+		if blk == nil {
+			break
+		}
+		if blk.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(blk.Bytes)
+		if err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// checkCertChain 校验粘贴的是不是完整证书链。
+//
+// 只粘叶子证书（漏掉中间 CA）时，服务端会只下发叶子：浏览器能自己补中间证书，
+// 但 Tailscale 客户端（Go 写的 tailscaled 不做 AIA 自动补链）会直接报
+// x509: certificate signed by unknown authority，连控制服务都上不去，
+// 表现为「连不上内置 DERP 中继」这类完全看不出原因的健康告警。
+//
+// 自签证书（mkcert 之类）本来就只有一张，不算缺链，放行。
+func checkCertChain(certPEM string) (field, code string) {
+	certs := parseCertChain(certPEM)
+	if len(certs) == 0 {
+		return "", "" // 解析失败由前面的校验报错
+	}
+	leaf := certs[0]
+	if len(certs) == 1 && leaf.Issuer.String() != leaf.Subject.String() {
+		return "cert_pem", "cfg.err.certChainIncomplete"
+	}
+	if len(certs) > 1 {
+		// 不只看名字对不对，还要验签名：同名但不同签发者的中间证书
+		// 名字是能对上的，签名却验不过。
+		if certs[0].Issuer.String() != certs[1].Subject.String() || certs[0].CheckSignatureFrom(certs[1]) != nil {
+			return "cert_pem", "cfg.err.certChainBroken"
+		}
+	}
 	return "", ""
 }
 

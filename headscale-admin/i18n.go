@@ -543,6 +543,8 @@ var dict = map[string][2]string{
 	"cfg.err.keyPEM":               {"私钥内容不像 PEM 文本：应包含 -----BEGIN PRIVATE KEY-----（或 RSA/EC 开头）与对应结尾行。", "This does not look like PEM text: it must contain a BEGIN/END PRIVATE KEY block (or RSA/EC variant)."},
 	"cfg.err.keyParse":             {"私钥内容无法解析，可能是粘贴不完整或被截断。", "The private key cannot be parsed; the paste may be incomplete."},
 	"cfg.err.pairMismatch":         {"证书与私钥不匹配：这段私钥不是该证书对应的私钥。", "Certificate and key do not match: this key does not belong to that certificate."},
+	"cfg.err.certChainIncomplete":  {"证书链不完整：这里只有一张叶子证书。请把签发它的中间 CA 证书一起粘上（叶子在前、中间在后）。缺中间证书时浏览器能打开，但 Tailscale 客户端会报 x509: certificate signed by unknown authority 而连不上。", "Incomplete certificate chain: only the leaf certificate was pasted. Paste the intermediate CA certificate too (leaf first, then intermediate). Browsers can still open it, but Tailscale clients fail with \"x509: certificate signed by unknown authority\"."},
+	"cfg.err.certChainBroken":      {"证书链接不上：第一张证书的签发者与第二张证书的主题对不上，请确认粘贴顺序是「叶子证书 → 中间 CA 证书」。", "The chain does not link: the issuer of the first certificate does not match the subject of the second. Paste them as leaf certificate first, then intermediate CA."},
 	"cfg.err.certSave":             {"写入证书文件失败：%s", "Failed to write certificate files: %s"},
 	"cfg.err.tlsMode":              {"请选择证书模式", "Select a certificate mode"},
 	"cfg.err.writeCandidate":       {"写入临时配置失败：%s", "Failed to write temporary config: %s"},

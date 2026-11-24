@@ -363,3 +363,79 @@ func TestDeleteNestedKey(t *testing.T) {
 		t.Fatalf("键不存在时应原样返回:\n%s", got)
 	}
 }
+
+// makeCAChain 生成「CA → 叶子」两级证书，用于验证证书链完整性校验。
+func makeCAChain(t *testing.T, cn string) (caPEM, leafPEM, keyPEM string) {
+	t.Helper()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成 CA 密钥失败: %v", err)
+	}
+	caTpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(10),
+		Subject:               pkix.Name{CommonName: "Test Intermediate CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTpl, caTpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("签发 CA 证书失败: %v", err)
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成叶子密钥失败: %v", err)
+	}
+	leafTpl := &x509.Certificate{
+		SerialNumber: big.NewInt(11),
+		Subject:      pkix.Name{CommonName: cn},
+		DNSNames:     []string{cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTpl, caTpl, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("签发叶子证书失败: %v", err)
+	}
+	caPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
+	leafPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}))
+	keyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)}))
+	return caPEM, leafPEM, keyPEM
+}
+
+// TestCheckCertChain 验证「只粘叶子证书」会被拦下。
+//
+// 这正是线上事故的成因：服务端只下发叶子证书，浏览器能自动补中间证书，
+// 但 Tailscale 客户端（Go 写的 tailscaled 不做 AIA 自动补链）会直接报
+// x509: certificate signed by unknown authority，连控制服务都上不去。
+func TestCheckCertChain(t *testing.T) {
+	caPEM, leafPEM, keyPEM := makeCAChain(t, "ts.example.com")
+	otherCA, _, _ := makeCAChain(t, "other.example.com")
+
+	cases := []struct {
+		name      string
+		certPEM   string
+		wantField string
+		wantCode  string
+	}{
+		{"完整链（叶子 + 中间）", leafPEM + caPEM, "", ""},
+		{"只粘叶子证书", leafPEM, "cert_pem", "cfg.err.certChainIncomplete"},
+		{"链接不上（中间证书不对）", leafPEM + otherCA, "cert_pem", "cfg.err.certChainBroken"},
+	}
+	for _, tc := range cases {
+		field, code := checkPastedPair(tc.certPEM, keyPEM)
+		if field != tc.wantField || code != tc.wantCode {
+			t.Errorf("%s: 得到 (%q, %q)，期望 (%q, %q)", tc.name, field, code, tc.wantField, tc.wantCode)
+		}
+	}
+}
+
+// TestCheckCertChainAllowsSelfSigned 自签证书只有一张，不算缺链（mkcert 场景）。
+func TestCheckCertChainAllowsSelfSigned(t *testing.T) {
+	certPEM, keyPEM := makePair(t, "self.example.com")
+	if field, code := checkPastedPair(certPEM, keyPEM); field != "" || code != "" {
+		t.Fatalf("自签证书应放行，得到 (%q, %q)", field, code)
+	}
+}
