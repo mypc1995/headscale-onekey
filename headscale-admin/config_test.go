@@ -405,7 +405,68 @@ func makeCAChain(t *testing.T, cn string) (caPEM, leafPEM, keyPEM string) {
 	return caPEM, leafPEM, keyPEM
 }
 
-// TestCheckCertChain 验证「只粘叶子证书」会被拦下。
+// makeThreeLevelChain 生成「根 CA → 中间 CA → 叶子」三级证书链，
+// 用于验证多张链里第 3 张及以后的相邻链接是否也会被校验。
+func makeThreeLevelChain(t *testing.T, cn string) (rootPEM, interPEM, leafPEM, keyPEM string) {
+	t.Helper()
+	rootKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成根 CA 密钥失败: %v", err)
+	}
+	rootTpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(20),
+		Subject:               pkix.Name{CommonName: "Test Root CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTpl, rootTpl, &rootKey.PublicKey, rootKey)
+	if err != nil {
+		t.Fatalf("签发根 CA 证书失败: %v", err)
+	}
+	interKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成中间 CA 密钥失败: %v", err)
+	}
+	interTpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(21),
+		Subject:               pkix.Name{CommonName: "Test Sub CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	interDER, err := x509.CreateCertificate(rand.Reader, interTpl, rootTpl, &interKey.PublicKey, rootKey)
+	if err != nil {
+		t.Fatalf("签发中间 CA 证书失败: %v", err)
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成叶子密钥失败: %v", err)
+	}
+	leafTpl := &x509.Certificate{
+		SerialNumber: big.NewInt(22),
+		Subject:      pkix.Name{CommonName: cn},
+		DNSNames:     []string{cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTpl, interTpl, &leafKey.PublicKey, interKey)
+	if err != nil {
+		t.Fatalf("签发叶子证书失败: %v", err)
+	}
+	rootPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER}))
+	interPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: interDER}))
+	leafPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}))
+	keyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)}))
+	return rootPEM, interPEM, leafPEM, keyPEM
+}
+
+// TestCheckCertChain 验证「只粘叶子证书」会被拦下，
+// 以及多张链里任意一对相邻证书接错都会被拦下。
 //
 // 这正是线上事故的成因：服务端只下发叶子证书，浏览器能自动补中间证书，
 // 但 Tailscale 客户端（Go 写的 tailscaled 不做 AIA 自动补链）会直接报
@@ -413,19 +474,24 @@ func makeCAChain(t *testing.T, cn string) (caPEM, leafPEM, keyPEM string) {
 func TestCheckCertChain(t *testing.T) {
 	caPEM, leafPEM, keyPEM := makeCAChain(t, "ts.example.com")
 	otherCA, _, _ := makeCAChain(t, "other.example.com")
+	rootPEM, interPEM, leaf3PEM, key3PEM := makeThreeLevelChain(t, "ts3.example.com")
 
 	cases := []struct {
 		name      string
 		certPEM   string
+		keyPEM    string
 		wantField string
 		wantCode  string
 	}{
-		{"完整链（叶子 + 中间）", leafPEM + caPEM, "", ""},
-		{"只粘叶子证书", leafPEM, "cert_pem", "cfg.err.certChainIncomplete"},
-		{"链接不上（中间证书不对）", leafPEM + otherCA, "cert_pem", "cfg.err.certChainBroken"},
+		{"完整链（叶子 + 中间）", leafPEM + caPEM, keyPEM, "", ""},
+		{"只粘叶子证书", leafPEM, keyPEM, "cert_pem", "cfg.err.certChainIncomplete"},
+		{"链接不上（中间证书不对）", leafPEM + otherCA, keyPEM, "cert_pem", "cfg.err.certChainBroken"},
+		{"三级链全部正确（叶子 + 中间 + 根）", leaf3PEM + interPEM + rootPEM, key3PEM, "", ""},
+		{"三级链第 3 张接错（贴了不相关的 CA）", leaf3PEM + interPEM + otherCA, key3PEM, "cert_pem", "cfg.err.certChainBroken"},
+		{"三级链中间那张接错", leaf3PEM + otherCA + rootPEM, key3PEM, "cert_pem", "cfg.err.certChainBroken"},
 	}
 	for _, tc := range cases {
-		field, code := checkPastedPair(tc.certPEM, keyPEM)
+		field, code := checkPastedPair(tc.certPEM, tc.keyPEM)
 		if field != tc.wantField || code != tc.wantCode {
 			t.Errorf("%s: 得到 (%q, %q)，期望 (%q, %q)", tc.name, field, code, tc.wantField, tc.wantCode)
 		}

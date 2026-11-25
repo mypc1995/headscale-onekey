@@ -354,6 +354,48 @@ MIIB
 -----END CERTIFICATE-----" --data-urlencode "tls_key_pem=" -o "$TMPDIR/e5.html"
 grep -q '成对粘贴' "$TMPDIR/e5.html" && ok "证书私钥缺一被拦截" || fail "缺一项未被拦截"
 
+# 多张链里第 3 张及以后接错也必须被拦下（线上事故的升级版：链能连到中间 CA，
+# 但最后一张贴错，只有一部分客户端建不出链，症状更隐蔽）。
+# 这里造「CA → 叶子」两级链，再在后面追加一张无关的 CA：
+# 前两张是好的，旧实现只查前两张会放行，然后就把证书写进 /etc/headscale/certs。
+# 所以测试前后要对比证书文件是否被改动，被改了就立刻还原。
+CERT_FILE=/etc/headscale/certs/manual.crt
+CERT_BAK="$TMPDIR/manual.crt.before"
+[[ -f "$CERT_FILE" ]] && cp -a "$CERT_FILE" "$CERT_BAK"
+# 进到临时目录再用相对文件名生成：Git Bash 自带的 openssl 是 Windows 版，
+# 认不了 POSIX 绝对路径（会把 /tmp/x 当成 Git 安装目录下的路径）。
+# MSYS2_ARG_CONV_EXCL="*" 是为了不让 MSYS 把 -subj "/CN=..." 当成路径去转换
+# （它会转成 "D:/Program Files/Git/CN=..."，openssl 直接报 subject 格式错）。
+# Linux 上这两个变量无副作用。
+(
+  cd "$TMPDIR" || exit 1
+  MSYS2_ARG_CONV_EXCL="*" openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout e2e-ca.key \
+    -out e2e-ca.crt -subj "/CN=hsa-e2e-root" >/dev/null 2>&1
+  MSYS2_ARG_CONV_EXCL="*" openssl req -newkey rsa:2048 -nodes -keyout e2e-leaf.key \
+    -out e2e-leaf.csr -subj "/CN=hsa-e2e-leaf" >/dev/null 2>&1
+  MSYS2_ARG_CONV_EXCL="*" openssl x509 -req -in e2e-leaf.csr -CA e2e-ca.crt \
+    -CAkey e2e-ca.key -CAcreateserial -days 1 -out e2e-leaf.crt >/dev/null 2>&1
+  MSYS2_ARG_CONV_EXCL="*" openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout e2e-other.key \
+    -out e2e-other.crt -subj "/CN=hsa-e2e-other" >/dev/null 2>&1
+)
+if [[ -s "$TMPDIR/e2e-leaf.crt" && -s "$TMPDIR/e2e-ca.crt" && -s "$TMPDIR/e2e-other.crt" ]]; then
+  curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+    --data-urlencode "csrf=${CSRF}" --data-urlencode "tls_mode=manual" \
+    --data-urlencode "tls_cert_pem=$(cat "$TMPDIR/e2e-leaf.crt" "$TMPDIR/e2e-ca.crt" "$TMPDIR/e2e-other.crt")" \
+    --data-urlencode "tls_key_pem=$(cat "$TMPDIR/e2e-leaf.key")" -o "$TMPDIR/e6.html"
+  grep -q '证书链接不上' "$TMPDIR/e6.html" && ok "链上第 3 张接错被拦截" || fail "第 3 张接错未被拦截"
+  if [[ -f "$CERT_FILE" && -f "$CERT_BAK" ]]; then
+    if cmp -s "$CERT_FILE" "$CERT_BAK"; then
+      ok "校验不通过时证书文件未被改动"
+    else
+      fail "校验不通过却写了证书文件（已还原）"
+      cp -a "$CERT_BAK" "$CERT_FILE"
+    fi
+  fi
+else
+  info "无法生成测试用证书链，跳过「第 3 张接错」用例"
+fi
+
 if [[ "$(uname -s)" == "Linux" ]]; then
   # 表单里带 magic_dns=on：设置页的 MagicDNS 复选框默认是勾上的，浏览器提交时
   # 一定会带上这个字段。漏传等于模拟"用户偷偷取消了勾选"，会把开关写成 false。

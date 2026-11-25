@@ -605,6 +605,10 @@ func parseCertChain(certPEM string) []*x509.Certificate {
 // x509: certificate signed by unknown authority，连控制服务都上不去，
 // 表现为「连不上内置 DERP 中继」这类完全看不出原因的健康告警。
 //
+// 链上**每一对相邻证书**都要验签名，不能只查前两张：多张链里第 3 张及以后
+// 贴错（顺序反了、贴了不相关的证书、少贴一张中间 CA）同样会让一部分客户端
+// 建不出链，而症状依旧表现为「只有某些设备连不上」，很难往证书上想。
+//
 // 自签证书（mkcert 之类）本来就只有一张，不算缺链，放行。
 func checkCertChain(certPEM string) (field, code string) {
 	certs := parseCertChain(certPEM)
@@ -615,10 +619,10 @@ func checkCertChain(certPEM string) (field, code string) {
 	if len(certs) == 1 && leaf.Issuer.String() != leaf.Subject.String() {
 		return "cert_pem", "cfg.err.certChainIncomplete"
 	}
-	if len(certs) > 1 {
+	for i := 0; i+1 < len(certs); i++ {
 		// 不只看名字对不对，还要验签名：同名但不同签发者的中间证书
 		// 名字是能对上的，签名却验不过。
-		if certs[0].Issuer.String() != certs[1].Subject.String() || certs[0].CheckSignatureFrom(certs[1]) != nil {
+		if certs[i].Issuer.String() != certs[i+1].Subject.String() || certs[i].CheckSignatureFrom(certs[i+1]) != nil {
 			return "cert_pem", "cfg.err.certChainBroken"
 		}
 	}
