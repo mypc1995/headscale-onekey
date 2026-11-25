@@ -308,19 +308,56 @@ func (a *App) userDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// nodeRename 重命名节点。
+//
+// headscale v0.29 的 `nodes rename` 改的是节点的 given_name（受管名，也是 MagicDNS 域名里
+// 主机名那一段），不是客户端上报的 name —— 两者不是一回事，页面必须用 given_name 回显，
+// 否则改完名列表纹丝不动，看着像没生效。
+//
+// 名字先在本地按 DNS label 规则校验：中文名之类 headscale 一定会拒的输入，
+// 在这里就给出可读提示，不用等命令行报错。
 func (a *App) nodeRename(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
+	lang := langFrom(r)
 	id, err := formUint(r, "id")
 	if err != nil {
 		a.redirectWithFlash(w, r, "/nodes", err.Error())
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
-	a.doAction(w, r, "/nodes", func() (string, error) {
-		return a.hs.Action("nodes", "rename", name, "-i", str(id), "--force")
-	})
+	if !validNodeLabel(name) {
+		a.redirectWithFlash(w, r, "/nodes", tr(lang, "msg.nodeNameInvalid"))
+		return
+	}
+	if _, err := a.hs.Action("nodes", "rename", name, "-i", str(id), "--force"); err != nil {
+		a.redirectWithFlash(w, r, "/nodes", tr(lang, "msg.operationFailed", err.Error()))
+		return
+	}
+	a.redirectWithFlash(w, r, "/nodes", tr(lang, "msg.nodeRenamed", name))
+}
+
+// validNodeLabel 按 DNS label 规则校验节点名，规则与 tailscale 的 dnsname.ValidLabel 一致：
+// 1~63 字节，首尾必须是字母或数字，中间可以含 '-'。
+// 不含下划线与中文——headscale 用它拼 MagicDNS 域名，带这些字符一定被拒。
+func validNodeLabel(s string) bool {
+	if len(s) == 0 || len(s) > 63 {
+		return false
+	}
+	if !isAlnumByte(s[0]) || !isAlnumByte(s[len(s)-1]) {
+		return false
+	}
+	for i := 1; i < len(s)-1; i++ {
+		if !isAlnumByte(s[i]) && s[i] != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func isAlnumByte(c byte) bool {
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
 }
 
 func (a *App) nodeExpire(w http.ResponseWriter, r *http.Request) {

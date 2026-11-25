@@ -59,7 +59,7 @@
       <thead><tr><th>{{t .Lang "nodeMon.node"}}</th><th>{{t .Lang "nodeMon.user"}}</th><th>{{t .Lang "nodeMon.ip"}}</th><th>{{t .Lang "nodeMon.status"}}</th><th>{{t .Lang "nodeMon.speed"}}</th><th>{{t .Lang "nodeMon.lastSeen"}}</th><th>{{t .Lang "nodeMon.client"}}</th><th>{{t .Lang "nodeMon.expiry"}}</th><th>{{t .Lang "nodeMon.tagsRoutes"}}</th></tr></thead>
       <tbody id="node-rows" data-routes="{{t .Lang "nodeMon.routes"}}" data-pending="{{t .Lang "nodeMon.pendingRoutes"}}" data-speed-na="{{t .Lang "nodeMon.speedNA"}}">
         {{range .Data.Nodes.Nodes}}<tr>
-          <td class="node-name"><b>{{.Name}}</b><div class="muted small">#{{.ID}}</div></td>
+          <td class="node-name"><b>{{.Name}}</b>{{if and .ClientName (ne .ClientName .Name)}}<div class="muted small">{{t $.Lang "label.clientHostname"}}：{{.ClientName}}</div>{{end}}<div class="muted small">#{{.ID}}</div></td>
           <td class="small">{{.User}}</td>
           <td class="small mono nowrap">{{if .IPs}}{{join .IPs ", "}}{{else}}—{{end}}</td>
           <td><span class="badge {{if eq .State "online"}}success{{else if eq .State "expired"}}danger{{else}}muted{{end}}">{{if eq .State "online"}}<span class="dot"></span>{{end}}{{.StateText}}</span></td>

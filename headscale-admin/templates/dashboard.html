@@ -24,7 +24,7 @@
   <div class="table-wrap"><table>
     <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.name"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.address"}}</th><th>{{t .Lang "col.online"}}</th><th>{{t .Lang "col.lastSeen"}}</th></tr></thead>
     <tbody>{{range .Data.Recent}}<tr>
-      <td>{{field . "id"}}</td><td><b>{{field . "name"}}</b></td><td>{{userOf .}}</td>
+      <td>{{field . "id"}}</td><td><b>{{nodeName .}}</b></td><td>{{userOf .}}</td>
       <td>{{list (index . "ip_addresses")}}</td>
       <td>{{if eq (field . "online") "true"}}<span class="badge success"><span class="dot"></span>{{t $.Lang "state.online"}}</span>{{else}}<span class="badge muted">{{t $.Lang "state.offline"}}</span>{{end}}</td>
       <td class="muted small">{{tf (index . "last_seen")}}</td>

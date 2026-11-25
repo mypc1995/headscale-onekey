@@ -768,7 +768,7 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   info "验证上报后节点速度真正显示出来"
   # 造一个节点出来，上报的数据才能挂到具体节点上。
   cat >"$TMPDIR/nodes.json" <<'JSON'
-[{"id":12,"name":"laptop","user":{"name":"default"},"ip_addresses":["100.64.0.5"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"expiration":{"seconds":1894975942,"nanos":0},"register_method":"1","client_version":"1.60.0","host_info":{"os":"linux"},"tags":[],"approved_routes":[],"available_routes":[]}]
+[{"id":12,"name":"laptop","given_name":"laptop","user":{"name":"default"},"ip_addresses":["100.64.0.5"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"expiration":{"seconds":1894975942,"nanos":0},"register_method":"1","client_version":"1.60.0","host_info":{"os":"linux"},"tags":[],"approved_routes":[],"available_routes":[]}]
 JSON
   # 连报两次：第一次建立基准，第二次才有速率差值。
   sp_code -H "X-Node-Speed-Token: $SPEED_TOKEN" -d '{"node":"100.64.0.5","rx_bytes":1000,"tx_bytes":500}' >/dev/null
@@ -795,7 +795,7 @@ info "验证路由审批（待审批集合 + 全量覆盖语义）"
 # 节点 21 有一条已批准（10.0.0.0/8）和一条待批准（192.168.1.0/24）；
 # 节点 22 全部已批准，不该再出现在审批队列里。
 cat >"$TMPDIR/nodes.json" <<'JSON'
-[{"id":21,"name":"router","user":{"name":"default"},"ip_addresses":["100.64.0.9"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["10.0.0.0/8"],"available_routes":["10.0.0.0/8","192.168.1.0/24"]},{"id":22,"name":"router2","user":{"name":"default"},"ip_addresses":["100.64.0.10"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["192.168.2.0/24"],"available_routes":["192.168.2.0/24"]}]
+[{"id":21,"name":"router","given_name":"office-router","user":{"name":"default"},"ip_addresses":["100.64.0.9"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["10.0.0.0/8"],"available_routes":["10.0.0.0/8","192.168.1.0/24"]},{"id":22,"name":"router2","given_name":"router2","user":{"name":"default"},"ip_addresses":["100.64.0.10"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["192.168.2.0/24"],"available_routes":["192.168.2.0/24"]}]
 JSON
 curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-page.html"
 # 路由审批卡片是页面最后一个 section，从它的标题往后截取，
@@ -815,12 +815,35 @@ grep -q -- '-r 10.0.0.0/8,192.168.1.0/24' "$TMPDIR/hs-calls.log" && ok "审批�
 
 # 审批生效后（模拟 headscale 把路由挪进 approved），该路由必须从队列里消失。
 cat >"$TMPDIR/nodes.json" <<'JSON'
-[{"id":21,"name":"router","user":{"name":"default"},"ip_addresses":["100.64.0.9"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["10.0.0.0/8","192.168.1.0/24"],"available_routes":["10.0.0.0/8","192.168.1.0/24"]}]
+[{"id":21,"name":"router","given_name":"office-router","user":{"name":"default"},"ip_addresses":["100.64.0.9"],"online":true,"last_seen":{"seconds":1794889542,"nanos":0},"tags":[],"approved_routes":["10.0.0.0/8","192.168.1.0/24"],"available_routes":["10.0.0.0/8","192.168.1.0/24"]}]
 JSON
 curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-page2.html"
 awk '/路由审批/{f=1} f' "$TMPDIR/nodes-page2.html" >"$TMPDIR/route-section2.html"
 grep -q '192.168.1.0/24' "$TMPDIR/route-section2.html" && fail "批准后该路由仍留在审批队列" || ok "批准后该路由已从审批队列移除"
 grep -q '没有待审批的路由' "$TMPDIR/route-section2.html" && ok "队列清空后给出空状态提示" || fail "队列清空后缺少空状态提示"
+
+info "验证节点改名"
+# headscale v0.29 的 `nodes rename` 改的是 given_name（受管名 / MagicDNS 名），
+# 节点 JSON 里的 name 是客户端上报的主机名。页面必须显示并回显 given_name，
+# 否则改完名列表纹丝不动，用户只会看到「改了没生效」。
+curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-rename.html"
+grep -q 'office-router' "$TMPDIR/nodes-rename.html" && ok "节点列表显示受管名 given_name" || fail "节点列表没有显示受管名"
+grep -q '客户端上报名：router' "$TMPDIR/nodes-rename.html" && ok "客户端上报名单独标注" || fail "缺少客户端上报名标注"
+grep -q 'name="name" value="office-router"' "$TMPDIR/nodes-rename.html" && ok "改名输入框预填受管名" || fail "改名输入框没有预填受管名"
+# 合法名：命令要带上新名字与节点 ID，页面要给出明确提示。
+: >"$TMPDIR/hs-calls.log"
+CSRF_N="$(curl -s -b "$JAR" "$BASE/nodes" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+curl -s -b "$JAR" -X POST "$BASE/nodes/rename" --data-urlencode "csrf=${CSRF_N}" --data-urlencode "id=21" --data-urlencode "name=nas-room" -o /dev/null
+grep -q -- 'nodes rename nas-room -i 21 --force' "$TMPDIR/hs-calls.log" && ok "改名命令带上了新名字与节点 ID" || fail "改名命令参数不对"
+curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-renamed.html"
+grep -q '节点已重命名为 nas-room' "$TMPDIR/nodes-renamed.html" && ok "改名成功后给出明确提示" || fail "改名成功后缺少提示"
+# 非法名（中文）：必须在调用 headscale 之前就挡下，不能等命令行报错。
+: >"$TMPDIR/hs-calls.log"
+CSRF_N="$(curl -s -b "$JAR" "$BASE/nodes" | grep -o 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//')"
+curl -s -b "$JAR" -X POST "$BASE/nodes/rename" --data-urlencode "csrf=${CSRF_N}" --data-urlencode "id=21" --data-urlencode "name=书房路由" -o /dev/null
+grep -q -- 'nodes rename' "$TMPDIR/hs-calls.log" && fail "非法节点名仍然调用了 headscale" || ok "非法节点名在调用前被拦下"
+curl -s -b "$JAR" "$BASE/nodes" -o "$TMPDIR/nodes-badname.html"
+grep -q '节点名不合法' "$TMPDIR/nodes-badname.html" && ok "非法节点名给出可读提示" || fail "非法节点名缺少可读提示"
 
 # 仪表盘那一格现在统计的是待审批路由数（原来统计的是有路由的节点数）。
 curl -s -b "$JAR" "$BASE/" -o "$TMPDIR/dash.html"

@@ -5,13 +5,13 @@
     <thead><tr><th>{{t .Lang "col.id"}}</th><th>{{t .Lang "col.name"}}</th><th>{{t .Lang "col.user"}}</th><th>{{t .Lang "col.address"}}</th><th>{{t .Lang "col.status"}}</th><th>{{t .Lang "col.tagsRoutes"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
     <tbody>{{range .Data.Nodes}}<tr>
       <td>{{field . "id"}}</td>
-      <td><b>{{field . "name"}}</b><div class="muted small">{{short (field . "node_key") 22}}</div></td>
+      <td><b>{{nodeName .}}</b><div class="muted small">{{t $.Lang "label.clientHostname"}}：{{field . "name"}}</div><div class="muted small">{{short (field . "node_key") 22}}</div></td>
       <td>{{userOf .}}</td>
       <td class="small">{{list (index . "ip_addresses")}}</td>
       <td>{{if eq (field . "online") "true"}}<span class="badge success"><span class="dot"></span>{{t $.Lang "state.online"}}</span>{{else}}<span class="badge muted">{{t $.Lang "state.offline"}}</span>{{end}}<div class="muted small">{{tf (index . "last_seen")}}</div></td>
       <td class="small"><div class="muted">{{t $.Lang "label.nodeTags"}}: {{list (index . "tags")}}</div><div class="muted">{{t $.Lang "label.approved"}}: {{list (index . "approved_routes")}}</div><div class="muted">{{t $.Lang "label.available"}}: {{list (index . "available_routes")}}</div><div class="muted">{{t $.Lang "label.pending"}}: {{list (index . "pending_routes")}}</div></td>
       <td class="ops">
-        <form method="post" action="/nodes/rename" data-confirm="{{t $.Lang "confirm.renameNode"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="name" value="{{field . "name"}}" required><button class="btn btn-sm" type="submit">{{t $.Lang "action.rename"}}</button></form>
+        <form method="post" action="/nodes/rename" data-confirm="{{t $.Lang "confirm.renameNode"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="name" value="{{nodeName .}}" pattern="[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?" title="{{t $.Lang "hint.renameNodeName"}}" required><button class="btn btn-sm" type="submit">{{t $.Lang "action.rename"}}</button></form>
         <form method="post" action="/nodes/tag" data-confirm="{{t $.Lang "confirm.tagNode"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="tags" placeholder="tag1,tag2"><button class="btn btn-sm" type="submit">{{t $.Lang "action.tag"}}</button></form>
         <form method="post" action="/nodes/expire" data-confirm="{{t $.Lang "confirm.expireNode"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-warning" type="submit">{{t $.Lang "action.expire"}}</button></form>
         <form method="post" action="/nodes/delete" data-confirm="{{t $.Lang "confirm.deleteNode"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><button class="btn btn-sm btn-danger" type="submit">{{t $.Lang "action.delete"}}</button></form>
@@ -25,7 +25,7 @@
   {{if .Data.Routes}}<div class="table-wrap"><table>
     <thead><tr><th>{{t .Lang "col.nodeID"}}</th><th>{{t .Lang "col.node"}}</th><th>{{t .Lang "col.pendingRoutes"}}</th><th>{{t .Lang "col.approvedRoutes"}}</th><th>{{t .Lang "col.actions"}}</th></tr></thead>
     <tbody>{{range .Data.Routes}}<tr>
-      <td>{{field . "id"}}</td><td><b>{{field . "name"}}</b></td>
+      <td>{{field . "id"}}</td><td><b>{{nodeName .}}</b></td>
       <td class="small">{{list (index . "pending_routes")}}</td><td class="small">{{list (index . "approved_routes")}}</td>
       <td class="ops"><form method="post" action="/nodes/approve" data-confirm="{{t $.Lang "confirm.approveRoute"}}">{{template "csrf" $}}<input type="hidden" name="id" value="{{field . "id"}}"><input class="form-input" name="routes" placeholder="10.0.0.0/8,192.168.1.0/24" value="{{list (index . "pending_routes")}}"><button class="btn btn-sm btn-primary" type="submit">{{t $.Lang "action.approve"}}</button></form></td>
     </tr>{{end}}</tbody>

@@ -117,6 +117,7 @@ func main() {
 
 	funcs := template.FuncMap{
 		"field":      fieldValue,
+		"nodeName":   nodeDisplayName,
 		"tf":         protoTime,
 		"masked":     maskedKey,
 		"keyExpired": keyExpired,
@@ -248,6 +249,16 @@ func splitCredential(s string) (string, string, bool) {
 
 func fieldValue(m map[string]any, key string) string { return str(m[key]) }
 func userOf(m map[string]any) string                 { return str(asMap(m["user"])["name"]) }
+
+// nodeDisplayName 取节点的受管名（given_name）：headscale v0.29 的 `nodes rename` 改的就是它，
+// 它同时是 MagicDNS 域名里主机名那一段。节点 JSON 里的 name 是客户端上报的主机名，
+// 客户端重连就会覆盖它，**不能**拿它当节点名显示或回显——否则改完名页面纹丝不动。
+func nodeDisplayName(m map[string]any) string {
+	if v := str(m["given_name"]); v != "" {
+		return v
+	}
+	return str(m["name"])
+}
 
 func joinAny(v any) string {
 	switch x := v.(type) {

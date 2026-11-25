@@ -20,8 +20,11 @@ import (
 // 所以网速由节点侧采集代理把计数器写进 HSA_NODE_SPEED_FILE，
 // 这里按两次采样的差值换算速率；文件不存在时 SpeedAvail=false，界面显示占位。
 type NodeStat struct {
-	ID              uint64    `json:"id"`
-	Name            string    `json:"name"`
+	ID uint64 `json:"id"`
+	// Name 是节点的受管名（given_name）：`nodes rename` 改的就是它，也是 MagicDNS 名。
+	Name string `json:"name"`
+	// ClientName 是客户端上报的主机名（JSON 里的 name），客户端重连就会变，只能当参考信息。
+	ClientName      string    `json:"client_name"`
 	User            string    `json:"user"`
 	IPs             []string  `json:"ips"`
 	Online          bool      `json:"online"`
@@ -369,7 +372,10 @@ func newNodesView(s NodeSnapshot, lang string) NodeSnapshot {
 // 字段全部做兼容取值：不同版本对 client_version / host_info 的命名略有差异。
 func nodeStatFromMap(item map[string]any, now time.Time) NodeStat {
 	n := NodeStat{
-		Name:            firstNonEmpty(str(item["name"]), str(item["given_name"])),
+		// 受管名（given_name）优先：它是 `nodes rename` 改的字段，也是 MagicDNS 用的名字。
+		// 老版本 headscale 没有 given_name 时回落到客户端上报名。
+		Name:            firstNonEmpty(str(item["given_name"]), str(item["name"])),
+		ClientName:      str(item["name"]),
 		User:            str(asMap(item["user"])["name"]),
 		IPs:             stringList(item["ip_addresses"]),
 		Online:          str(item["online"]) == "true",
