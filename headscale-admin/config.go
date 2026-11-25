@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -34,6 +35,7 @@ type ConfigPage struct {
 
 	// SSL 证书
 	TLSMode       string // letsencrypt | manual | http
+	TLSInputMode  string // 手动证书的输入方式：upload（上传文件）| paste（粘贴文本）
 	LEHostname    string
 	ACMEEmail     string
 	ACMEURL       string
@@ -543,10 +545,11 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 	return e
 }
 
-// ---------- 手动粘贴证书 ----------
+// ---------- 手动证书（上传文件或粘贴文本） ----------
 
-// manualCertDir 是手动粘贴证书的固定落盘位置，headscale 进程要能读到。
-const manualCertDir = "/etc/headscale/certs"
+// manualCertDir 是手动证书的固定落盘位置，headscale 进程要能读到。
+// 声明成变量是为了让测试能指向临时目录；生产上始终是下面这个路径。
+var manualCertDir = "/etc/headscale/certs"
 
 // checkPastedPair 校验粘贴的证书与私钥文本，返回出错字段与 i18n 键；通过时两者都为空。
 func checkPastedPair(certPEM, keyPEM string) (field, code string) {
@@ -596,6 +599,66 @@ func parseCertChain(certPEM string) []*x509.Certificate {
 		out = append(out, c)
 	}
 	return out
+}
+
+// orderCertChain 按签名关系把证书排成「叶子 → 中间 → 根」的顺序。
+//
+// CA 交付的 bundle 顺序经常不是这样：交叉签名的根可能排在中间 CA 前面，
+// 而链一旦顺序错了客户端就建不出链（症状是「只有部分设备连不上」，很难往证书上想）。
+// 这里从第一张（叶子）出发，每一步接上「Issuer 对得上 Subject 且验签通过」的那张。
+// 接不进链的证书按原顺序附在末尾，交给链校验去指出问题。
+func orderCertChain(certs []*x509.Certificate) []*x509.Certificate {
+	if len(certs) <= 1 {
+		return certs
+	}
+	used := make([]bool, len(certs))
+	used[0] = true
+	out := []*x509.Certificate{certs[0]}
+	cur := certs[0]
+	for {
+		next := -1
+		for i, c := range certs {
+			if used[i] {
+				continue
+			}
+			if cur.Issuer.String() != c.Subject.String() || cur.CheckSignatureFrom(c) != nil {
+				continue
+			}
+			next = i
+			break
+		}
+		if next < 0 {
+			break
+		}
+		used[next] = true
+		out = append(out, certs[next])
+		cur = certs[next]
+	}
+	for i, c := range certs {
+		if !used[i] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// buildChainPEM 把「公钥证书」与「中间证书」合并成一条完整链，并按签名关系排序。
+// leafPEM 里可以只有叶子，也可以是整条链；extraPEM 里是 CA 提供的中间/根证书。
+func buildChainPEM(leafPEM, extraPEM string) (string, error) {
+	certs := parseCertChain(leafPEM)
+	if len(certs) == 0 {
+		return "", errors.New("no certificate parsed")
+	}
+	if extra := parseCertChain(extraPEM); len(extra) > 0 {
+		certs = append(certs, extra...)
+	}
+	var buf bytes.Buffer
+	for _, c := range orderCertChain(certs) {
+		if err := pem.Encode(&buf, &pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}); err != nil {
+			return "", err
+		}
+	}
+	return buf.String(), nil
 }
 
 // checkCertChain 校验粘贴的是不是完整证书链。

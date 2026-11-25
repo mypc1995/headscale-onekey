@@ -149,6 +149,21 @@
   sync();
 })();
 
+// 证书输入方式：上传文件 / 粘贴文本
+(function () {
+  var radios = document.querySelectorAll('input[name="tls_input_mode"]');
+  if (!radios.length) return;
+  function sync() {
+    var mode = 'upload';
+    radios.forEach(function (r) { if (r.checked) mode = r.value; });
+    document.querySelectorAll('[data-tls-input]').forEach(function (el) {
+      el.hidden = el.getAttribute('data-tls-input') !== mode;
+    });
+  }
+  radios.forEach(function (r) { r.addEventListener('change', sync); });
+  sync();
+})();
+
 // 运维页：本机资源、节点状态与告警。数据由 /api/monitor 每 5 秒下发，
 // 节点列表本身在服务端每 15 秒采样一次，这里只负责渲染。
 (function () {

@@ -139,7 +139,7 @@
     {{end}}
   </div>
 
-  <form method="post" action="/settings/tls" class="form-stack">
+  <form method="post" action="/settings/tls" class="form-stack" enctype="multipart/form-data">
     {{template "csrf" .}}
     <div class="form-grid">
       <div class="form-group">
@@ -191,18 +191,49 @@
     <div class="tls-block" data-tls-mode="manual">
       <div class="form-grid">
         <div class="form-group span-2">
-          <label class="form-label" for="tls_cert_pem">{{t .Lang "cfg.field.certPEM"}}</label>
-          <textarea class="form-input{{if index .Data.Errors "cert_pem"}} invalid{{end}}" id="tls_cert_pem" name="tls_cert_pem" rows="6" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE-----&#10;MIIF...&#10;-----END CERTIFICATE-----"></textarea>
-          {{with index .Data.Errors "cert_pem"}}<span class="field-error">{{.}}</span>{{end}}
+          <div class="check-line">
+            <label class="check-label"><input class="form-checkbox" type="radio" name="tls_input_mode" value="upload" {{if ne .Data.TLSInputMode "paste"}}checked{{end}}> {{t .Lang "cfg.field.uploadMode"}}</label>
+            <label class="check-label"><input class="form-checkbox" type="radio" name="tls_input_mode" value="paste" {{if eq .Data.TLSInputMode "paste"}}checked{{end}}> {{t .Lang "cfg.field.pasteMode"}}</label>
+          </div>
         </div>
-        <div class="form-group span-2">
-          <label class="form-label" for="tls_key_pem">{{t .Lang "cfg.field.keyPEM"}}</label>
-          <textarea class="form-input{{if index .Data.Errors "key_pem"}} invalid{{end}}" id="tls_key_pem" name="tls_key_pem" rows="6" spellcheck="false" autocomplete="off" placeholder="-----BEGIN PRIVATE KEY-----&#10;MIIE...&#10;-----END PRIVATE KEY-----"></textarea>
-          {{with index .Data.Errors "key_pem"}}<span class="field-error">{{.}}</span>{{end}}
+
+        <div class="tls-input-block span-2" data-tls-input="upload">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label" for="tls_cert_file">{{t .Lang "cfg.field.certFile"}}</label>
+              <input class="form-input" type="file" id="tls_cert_file" name="tls_cert_file" accept=".crt,.pem,.cer,.txt">
+              {{with index .Data.Errors "cert_pem"}}<span class="field-error">{{.}}</span>{{end}}
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="tls_chain_file">{{t .Lang "cfg.field.chainFile"}}</label>
+              <input class="form-input" type="file" id="tls_chain_file" name="tls_chain_file" accept=".crt,.pem,.cer,.txt">
+            </div>
+            <div class="form-group span-2">
+              <label class="form-label" for="tls_key_file">{{t .Lang "cfg.field.keyFile"}}</label>
+              <input class="form-input" type="file" id="tls_key_file" name="tls_key_file" accept=".key,.pem,.txt">
+              {{with index .Data.Errors "key_pem"}}<span class="field-error">{{.}}</span>{{end}}
+            </div>
+          </div>
+          <p class="hint">{{t .Lang "cfg.hint.upload"}}</p>
+        </div>
+
+        <div class="tls-input-block span-2" data-tls-input="paste">
+          <div class="form-grid">
+            <div class="form-group span-2">
+              <label class="form-label" for="tls_cert_pem">{{t .Lang "cfg.field.certPEM"}}</label>
+              <textarea class="form-input{{if index .Data.Errors "cert_pem"}} invalid{{end}}" id="tls_cert_pem" name="tls_cert_pem" rows="6" spellcheck="false" autocomplete="off" placeholder="-----BEGIN CERTIFICATE-----&#10;MIIF...&#10;-----END CERTIFICATE-----"></textarea>
+              {{with index .Data.Errors "cert_pem"}}<span class="field-error">{{.}}</span>{{end}}
+            </div>
+            <div class="form-group span-2">
+              <label class="form-label" for="tls_key_pem">{{t .Lang "cfg.field.keyPEM"}}</label>
+              <textarea class="form-input{{if index .Data.Errors "key_pem"}} invalid{{end}}" id="tls_key_pem" name="tls_key_pem" rows="6" spellcheck="false" autocomplete="off" placeholder="-----BEGIN PRIVATE KEY-----&#10;MIIE...&#10;-----END PRIVATE KEY-----"></textarea>
+              {{with index .Data.Errors "key_pem"}}<span class="field-error">{{.}}</span>{{end}}
+            </div>
+          </div>
+          <p class="hint">{{t .Lang "cfg.hint.manual"}}</p>
         </div>
       </div>
       {{if .Data.CertPath}}<div class="notice">{{icon "file" 17}}<span>{{t .Lang "cfg.hint.manualCurrent"}}：<code class="mono">{{.Data.CertPath}}</code></span></div>{{end}}
-      <p class="hint">{{t .Lang "cfg.hint.manual"}}</p>
     </div>
 
     <div class="tls-block" data-tls-mode="http">

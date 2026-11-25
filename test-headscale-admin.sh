@@ -308,6 +308,10 @@ grep -q 'class="form-grid cols-3"' "$TMPDIR/settings.html" && ok "三个端口�
 grep -q 'class="check-line"' "$TMPDIR/settings.html" && ok "MagicDNS 为带说明的开关行" || fail "MagicDNS 未使用开关行"
 grep -q '设备 IPv4 网段' "$TMPDIR/settings.html" && ok "网段字段使用通俗名称" || fail "网段字段名称未更新"
 grep -q 'name="tls_cert_pem"' "$TMPDIR/settings.html" && ok "手动证书为粘贴文本框" || fail "手动证书不是文本框"
+grep -q 'name="tls_cert_file"' "$TMPDIR/settings.html" && ok "手动证书支持上传文件" || fail "手动证书没有上传入口"
+grep -q 'name="tls_chain_file"' "$TMPDIR/settings.html" && ok "手动证书有中间证书上传位" || fail "手动证书缺中间证书上传位"
+grep -q 'name="tls_key_file"' "$TMPDIR/settings.html" && ok "手动证书有私钥上传位" || fail "手动证书缺私钥上传位"
+grep -q 'enctype="multipart/form-data"' "$TMPDIR/settings.html" && ok "证书表单按 multipart 提交" || fail "证书表单未按 multipart 提交"
 grep -q 'name="tls_cert_path"' "$TMPDIR/settings.html" && fail "手动证书仍在填写路径" || ok "手动证书不再要求填写路径"
 grep -q 'value="http://127.0.0.1:8080"' "$TMPDIR/settings.html" && ok "配置页回显 server_url" || fail "配置页未回显 server_url"
 CSRF="$(grep -o 'name="csrf" value="[^"]*"' "$TMPDIR/settings.html" | head -1 | sed 's/.*value="//;s/"//')"
@@ -394,6 +398,41 @@ if [[ -s "$TMPDIR/e2e-leaf.crt" && -s "$TMPDIR/e2e-ca.crt" && -s "$TMPDIR/e2e-ot
   fi
 else
   info "无法生成测试用证书链，跳过「第 3 张接错」用例"
+fi
+
+# 证书上传：公钥证书 / 中间证书 / 私钥三个文件。
+# 上传不配对的私钥必须被拦下，且服务器上的证书文件不能被改动。
+# 上传成功会写 /etc/headscale/certs，隔离实例不能测这条路径——
+# 成功路径由 Go 单测（临时目录落盘 + 回滚）与生产环境实测覆盖。
+if [[ -s "$TMPDIR/e2e-leaf.crt" && -s "$TMPDIR/e2e-ca.crt" && -s "$TMPDIR/e2e-other.key" ]]; then
+  # curl 可能是 Windows 原生程序，不认 /tmp/... 路径，要用 cygpath 转成原生形式。
+  LEAF_PATH="$(cygpath -m "$TMPDIR/e2e-leaf.crt" 2>/dev/null || echo "$TMPDIR/e2e-leaf.crt")"
+  CA_PATH="$(cygpath -m "$TMPDIR/e2e-ca.crt" 2>/dev/null || echo "$TMPDIR/e2e-ca.crt")"
+  OTHERKEY_PATH="$(cygpath -m "$TMPDIR/e2e-other.key" 2>/dev/null || echo "$TMPDIR/e2e-other.key")"
+  curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+    -F "csrf=${CSRF}" -F "tls_mode=manual" -F "tls_input_mode=upload" \
+    -F "tls_cert_file=@${LEAF_PATH}" \
+    -F "tls_chain_file=@${CA_PATH}" \
+    -F "tls_key_file=@${OTHERKEY_PATH}" \
+    -o "$TMPDIR/e7.html"
+  grep -q '证书与私钥不匹配' "$TMPDIR/e7.html" && ok "上传的私钥与证书不配对被拦截" || fail "上传不配对未被拦截"
+
+  curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+    -F "csrf=${CSRF}" -F "tls_mode=manual" -F "tls_input_mode=upload" \
+    -F "tls_cert_file=@${LEAF_PATH}" \
+    -o "$TMPDIR/e8.html"
+  grep -q '没有选择私钥文件' "$TMPDIR/e8.html" && ok "上传缺私钥被拦截" || fail "上传缺私钥未被拦截"
+
+  if [[ -f "$CERT_FILE" && -f "$CERT_BAK" ]]; then
+    if cmp -s "$CERT_FILE" "$CERT_BAK"; then
+      ok "上传校验失败时证书文件未被改动"
+    else
+      fail "上传校验失败却写了证书文件（已还原）"
+      cp -a "$CERT_BAK" "$CERT_FILE"
+    fi
+  fi
+else
+  info "无法生成测试用证书，跳过「证书上传」用例"
 fi
 
 if [[ "$(uname -s)" == "Linux" ]]; then

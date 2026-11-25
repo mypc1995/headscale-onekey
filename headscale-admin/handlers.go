@@ -4,6 +4,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -1019,16 +1021,34 @@ func formField(r *http.Request, key string) (string, bool) {
 	return strings.TrimSpace(r.Form.Get(key)), true
 }
 
-// settingsTLS 保存证书方式。手动方式接收用户粘贴的证书与私钥文本，
-// 校验通过后写入固定位置，再交给 headscale 配置使用。
+// settingsTLS 保存证书方式。手动方式可以上传证书文件（公钥/中间证书/私钥），
+// 也可以粘贴 PEM 文本；校验通过后写入固定位置，再交给 headscale 配置使用。
 func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
+	lang := langFrom(r)
+	// 证书支持文件上传，表单是 multipart：先解析（CSRF 令牌也在 multipart 字段里），
+	// 再做权限与令牌校验。请求体大小同时受限，防止超大上传把内存打满。
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+		if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+			p := a.hs.loadConfigPage(lang)
+			p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
+			p.TLSInputMode = strings.TrimSpace(r.FormValue("tls_input_mode"))
+			p.Errors = map[string]string{"cert_pem": tr(lang, "cfg.err.uploadTooLarge")}
+			p.Warnings = configWarnings(p, lang)
+			a.renderSettings(w, r, p)
+			return
+		}
+	}
 	if !a.mutate(w, r) {
 		return
 	}
 	_ = r.ParseForm()
-	lang := langFrom(r)
 	p := a.hs.loadConfigPage(lang)
 	p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
+	p.TLSInputMode = strings.TrimSpace(r.FormValue("tls_input_mode"))
+	if p.TLSInputMode == "" {
+		p.TLSInputMode = "upload"
+	}
 	if v, ok := formField(r, "acme_email"); ok {
 		p.ACMEEmail = v
 	}
@@ -1046,6 +1066,15 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	}
 	p.CertPEM = strings.TrimSpace(r.FormValue("tls_cert_pem"))
 	p.KeyPEM = strings.TrimSpace(r.FormValue("tls_key_pem"))
+	// 选了文件就以文件内容为准（上传优先于粘贴）。
+	if up, field, code := readUploadedPair(r); code != "" {
+		p.Errors = map[string]string{field: tr(lang, code)}
+		p.Warnings = configWarnings(p, lang)
+		a.renderSettings(w, r, p)
+		return
+	} else if up.cert != "" {
+		p.CertPEM, p.KeyPEM = up.cert, up.key
+	}
 	host := strings.TrimSpace(r.FormValue("tls_letsencrypt_hostname"))
 
 	switch p.TLSMode {
@@ -1091,6 +1120,90 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.applySettings(w, r, p, next, "cfg.msg.tlsSaved", rollback)
+}
+
+// maxUploadBytes 限制证书上传请求体大小：一条完整链通常几十 KB，8 MiB 已经宽松。
+const maxUploadBytes = 8 << 20
+
+// maxUploadFileBytes 限制单个上传文件的大小。
+const maxUploadFileBytes = 2 << 20
+
+// uploadPair 是一次证书上传解析出来的内容（证书链已按签名关系排好）。
+type uploadPair struct {
+	cert string
+	key  string
+}
+
+// readUploadedPair 读取上传的证书文件：公钥证书（叶子）、中间证书、私钥。
+// 返回出错字段与 i18n 键；两者都空表示没有上传任何文件（应回落到粘贴的文本）。
+func readUploadedPair(r *http.Request) (uploadPair, string, string) {
+	if r.MultipartForm == nil {
+		return uploadPair{}, "", ""
+	}
+	certRaw, hasCert, err := readUploadFile(r, "tls_cert_file")
+	if err != nil {
+		return uploadPair{}, "cert_pem", "cfg.err.uploadTooLarge"
+	}
+	keyRaw, hasKey, err := readUploadFile(r, "tls_key_file")
+	if err != nil {
+		return uploadPair{}, "key_pem", "cfg.err.uploadTooLarge"
+	}
+	chainRaw, _, err := readUploadFile(r, "tls_chain_file")
+	if err != nil {
+		return uploadPair{}, "cert_pem", "cfg.err.uploadTooLarge"
+	}
+	if !hasCert && !hasKey {
+		return uploadPair{}, "", ""
+	}
+	if !hasCert {
+		return uploadPair{}, "cert_pem", "cfg.err.certFileEmpty"
+	}
+	if !hasKey {
+		return uploadPair{}, "key_pem", "cfg.err.keyFileEmpty"
+	}
+	certPEM, err := buildChainPEM(certRaw, chainRaw)
+	if err != nil {
+		return uploadPair{}, "cert_pem", "cfg.err.certFileInvalid"
+	}
+	return uploadPair{cert: certPEM, key: keyRaw}, "", ""
+}
+
+// readUploadFile 读取一个上传文件的文本内容。第二个返回值表示是否真的选了文件。
+func readUploadFile(r *http.Request, field string) (string, bool, error) {
+	if r.MultipartForm == nil {
+		return "", false, nil
+	}
+	fhs := r.MultipartForm.File[field]
+	if len(fhs) == 0 {
+		return "", false, nil
+	}
+	fh := fhs[0]
+	if strings.TrimSpace(fh.Filename) == "" {
+		return "", false, nil
+	}
+	if fh.Size > maxUploadFileBytes {
+		return "", true, errors.New("file too large")
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return "", true, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxUploadFileBytes+1))
+	if err != nil {
+		return "", true, err
+	}
+	if int64(len(b)) > maxUploadFileBytes {
+		return "", true, errors.New("file too large")
+	}
+	return normalizePEMText(string(b)), true, nil
+}
+
+// normalizePEMText 统一行尾、去掉 BOM 与首尾空白：上传的文件可能是 CRLF。
+func normalizePEMText(s string) string {
+	s = strings.TrimPrefix(s, "\ufeff")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.TrimSpace(s)
 }
 
 // applySettings 应用配置文本；失败时调用 rollback（可为 nil）撤销附带副作用。
