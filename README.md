@@ -238,10 +238,10 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 | 方式 | 做法 |
 | --- | --- |
 | 自动申请（Let's Encrypt） | 填证书域名（必填 FQDN）、到期通知邮箱（可选，填了必须合法）、验证方式（HTTP-01 / TLS-ALPN-01）、验证时临时监听地址、证书缓存目录 |
-| 手动粘贴已有证书 | 证书与私钥均以 PEM 文本粘贴，不涉及文件上传，也不需填写服务器路径。保存时先解析、用 `tls.X509KeyPair` 校验配对，通过后写入 `/etc/headscale/certs/manual.crt` 与 `manual.key`（0600，属主 `headscale`），再把路径写进 `tls_cert_path` / `tls_key_path` |
+| 手动上传已有证书 | 上传三个文件：**公钥证书（叶子）**、**中间证书（可含多张）**、**私钥**。服务端先把文件内容归一化（去 BOM、CRLF 转 LF），把证书按签名关系排成完整链（CA 交付的 bundle 顺序颠倒也能用），再用 `tls.X509KeyPair` 校验证书与私钥配对、逐对验签确认链完整，全部通过才写入 `/etc/headscale/certs/manual.crt` 与 `manual.key`（0600，属主 `headscale`），再把路径写进 `tls_cert_path` / `tls_key_path` |
 | 不启用 HTTPS | 清空 ACME 域名与证书路径 |
 
-手动粘贴时，已经配好、这次不更换则两项留空即可沿用原证书；粘贴的内容不会回显到页面。
+手动上传时，已经配好、这次不更换则三个框都留空即可沿用原证书；上传的私钥不会回显到页面。
 
 页面顶部解析当前证书，显示来源、CN、颁发者、生效与到期时间、剩余天数、SAN、私钥是否匹配。到期 30 天内或私钥不匹配会显示警告。
 
@@ -270,7 +270,7 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 5. 勾选「保存后立即重启」时执行 `systemctl restart headscale`，等待进程 active 且监听端口可连接；失败自动回滚到备份并再次重启。
 6. 成功后页面顶部提示结果与备份文件名。
 
-手动粘贴证书时，证书文件先落盘再写入配置；若后面的 `configtest` 或重启失败，证书文件会随配置一起还原成上一份。
+手动上传证书时，证书文件先落盘再写入配置；若后面的 `configtest` 或重启失败，证书文件会随配置一起还原成上一份。
 
 > 修改监听端口或 `server_url` 会短暂中断客户端连接；切换 HTTP/HTTPS 需要两侧配置配套修改，页面会在不一致时给出警告。
 

@@ -300,14 +300,14 @@ curl -s -b "$JAR" "$BASE/" | grep -c 'id="theme-dropdown"' >/dev/null && ok "主
 
 info "验证 Headscale 配置页"
 curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings.html"
-for kw in '域名与访问地址' '端口与网段' 'HTTPS 证书' '证书自动更新' '客户端连接端口' '手动粘贴已有证书'; do
+for kw in '域名与访问地址' '端口与网段' 'HTTPS 证书' '证书自动更新' '客户端连接端口' '手动上传已有证书'; do
   grep -q "$kw" "$TMPDIR/settings.html" && ok "配置页包含「$kw」" || fail "配置页缺少「$kw」"
 done
 grep -q 'class="key">listen_addr<' "$TMPDIR/settings.html" && ok "字段旁标注原始配置键" || fail "缺少原始配置键标注"
 grep -q 'class="form-grid cols-3"' "$TMPDIR/settings.html" && ok "三个端口按三列排布" || fail "端口字段未使用三列布局"
 grep -q 'class="check-line"' "$TMPDIR/settings.html" && ok "MagicDNS 为带说明的开关行" || fail "MagicDNS 未使用开关行"
 grep -q '设备 IPv4 网段' "$TMPDIR/settings.html" && ok "网段字段使用通俗名称" || fail "网段字段名称未更新"
-grep -q 'name="tls_cert_pem"' "$TMPDIR/settings.html" && ok "手动证书为粘贴文本框" || fail "手动证书不是文本框"
+grep -q 'name="tls_cert_pem"' "$TMPDIR/settings.html" && fail "手动证书仍留着粘贴文本框" || ok "手动证书不再提供粘贴文本框"
 grep -q 'name="tls_cert_file"' "$TMPDIR/settings.html" && ok "手动证书支持上传文件" || fail "手动证书没有上传入口"
 grep -q 'name="tls_chain_file"' "$TMPDIR/settings.html" && ok "手动证书有中间证书上传位" || fail "手动证书缺中间证书上传位"
 grep -q 'name="tls_key_file"' "$TMPDIR/settings.html" && ok "手动证书有私钥上传位" || fail "手动证书缺私钥上传位"
@@ -341,22 +341,11 @@ curl -s -b "$JAR" -X POST "$BASE/settings/network" \
 grep -q '已勾选启用 IPv6' "$TMPDIR/e2c.html" && ok "勾选 IPv6 却留空被拦截" || fail "勾选 IPv6 留空未被拦截"
 
 curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-  -d "csrf=${CSRF}&tls_mode=letsencrypt&tls_letsencrypt_hostname=&acme_email=bad&tls_letsencrypt_challenge_type=HTTP-01&tls_letsencrypt_listen=:http&tls_letsencrypt_cache_dir=/var/lib/headscale/cache" -o "$TMPDIR/e3.html"
+  -F "csrf=${CSRF}" -F "tls_mode=letsencrypt" -F "tls_letsencrypt_hostname=" -F "acme_email=bad" \
+  -F "tls_letsencrypt_challenge_type=HTTP-01" -F "tls_letsencrypt_listen=:http" \
+  -F "tls_letsencrypt_cache_dir=/var/lib/headscale/cache" -o "$TMPDIR/e3.html"
 grep -q '证书域名不能为空' "$TMPDIR/e3.html" && ok "缺少证书域名被拦截" || fail "缺少证书域名未被拦截"
 grep -q '邮箱格式不正确' "$TMPDIR/e3.html" && ok "非法邮箱被拦截" || fail "非法邮箱未被拦截"
-
-curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-  --data-urlencode "csrf=${CSRF}" --data-urlencode "tls_mode=manual" \
-  --data-urlencode "tls_cert_pem=这是一个证书" --data-urlencode "tls_key_pem=这是一个私钥" \
-  -o "$TMPDIR/e4.html"
-grep -q '不像 PEM 文本' "$TMPDIR/e4.html" && ok "非 PEM 的粘贴内容被拦截" || fail "非 PEM 内容未被拦截"
-
-curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-  --data-urlencode "csrf=${CSRF}" --data-urlencode "tls_mode=manual" \
-  --data-urlencode "tls_cert_pem=-----BEGIN CERTIFICATE-----
-MIIB
------END CERTIFICATE-----" --data-urlencode "tls_key_pem=" -o "$TMPDIR/e5.html"
-grep -q '成对粘贴' "$TMPDIR/e5.html" && ok "证书私钥缺一被拦截" || fail "缺一项未被拦截"
 
 # 多张链里第 3 张及以后接错也必须被拦下（线上事故的升级版：链能连到中间 CA，
 # 但最后一张贴错，只有一部分客户端建不出链，症状更隐蔽）。
@@ -383,10 +372,18 @@ CERT_BAK="$TMPDIR/manual.crt.before"
     -out e2e-other.crt -subj "/CN=hsa-e2e-other" >/dev/null 2>&1
 )
 if [[ -s "$TMPDIR/e2e-leaf.crt" && -s "$TMPDIR/e2e-ca.crt" && -s "$TMPDIR/e2e-other.crt" ]]; then
+  # curl 可能是 Windows 原生程序，不认 /tmp/... 路径，要用 cygpath 转成原生形式。
+  LEAF_PATH="$(cygpath -m "$TMPDIR/e2e-leaf.crt" 2>/dev/null || echo "$TMPDIR/e2e-leaf.crt")"
+  LEAFKEY_PATH="$(cygpath -m "$TMPDIR/e2e-leaf.key" 2>/dev/null || echo "$TMPDIR/e2e-leaf.key")"
+  # 叶子 + 中间 CA + 一张无关的 CA 拼在一起上传：链上有一张接错就必须被拦下。
+  cat "$TMPDIR/e2e-leaf.crt" "$TMPDIR/e2e-ca.crt" "$TMPDIR/e2e-other.crt" > "$TMPDIR/e2e-chain3.crt"
+  CHAIN3_PATH="$(cygpath -m "$TMPDIR/e2e-chain3.crt" 2>/dev/null || echo "$TMPDIR/e2e-chain3.crt")"
   curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-    --data-urlencode "csrf=${CSRF}" --data-urlencode "tls_mode=manual" \
-    --data-urlencode "tls_cert_pem=$(cat "$TMPDIR/e2e-leaf.crt" "$TMPDIR/e2e-ca.crt" "$TMPDIR/e2e-other.crt")" \
-    --data-urlencode "tls_key_pem=$(cat "$TMPDIR/e2e-leaf.key")" -o "$TMPDIR/e6.html"
+    -F "csrf=${CSRF}" -F "tls_mode=manual" \
+    -F "tls_cert_file=@${LEAF_PATH}" \
+    -F "tls_chain_file=@${CHAIN3_PATH}" \
+    -F "tls_key_file=@${LEAFKEY_PATH}" \
+    -o "$TMPDIR/e6.html"
   grep -q '证书链接不上' "$TMPDIR/e6.html" && ok "链上第 3 张接错被拦截" || fail "第 3 张接错未被拦截"
   if [[ -f "$CERT_FILE" && -f "$CERT_BAK" ]]; then
     if cmp -s "$CERT_FILE" "$CERT_BAK"; then
@@ -410,7 +407,7 @@ if [[ -s "$TMPDIR/e2e-leaf.crt" && -s "$TMPDIR/e2e-ca.crt" && -s "$TMPDIR/e2e-ot
   CA_PATH="$(cygpath -m "$TMPDIR/e2e-ca.crt" 2>/dev/null || echo "$TMPDIR/e2e-ca.crt")"
   OTHERKEY_PATH="$(cygpath -m "$TMPDIR/e2e-other.key" 2>/dev/null || echo "$TMPDIR/e2e-other.key")"
   curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-    -F "csrf=${CSRF}" -F "tls_mode=manual" -F "tls_input_mode=upload" \
+    -F "csrf=${CSRF}" -F "tls_mode=manual" \
     -F "tls_cert_file=@${LEAF_PATH}" \
     -F "tls_chain_file=@${CA_PATH}" \
     -F "tls_key_file=@${OTHERKEY_PATH}" \
@@ -418,10 +415,20 @@ if [[ -s "$TMPDIR/e2e-leaf.crt" && -s "$TMPDIR/e2e-ca.crt" && -s "$TMPDIR/e2e-ot
   grep -q '证书与私钥不匹配' "$TMPDIR/e7.html" && ok "上传的私钥与证书不配对被拦截" || fail "上传不配对未被拦截"
 
   curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-    -F "csrf=${CSRF}" -F "tls_mode=manual" -F "tls_input_mode=upload" \
+    -F "csrf=${CSRF}" -F "tls_mode=manual" \
     -F "tls_cert_file=@${LEAF_PATH}" \
     -o "$TMPDIR/e8.html"
   grep -q '没有选择私钥文件' "$TMPDIR/e8.html" && ok "上传缺私钥被拦截" || fail "上传缺私钥未被拦截"
+
+  # 上传的根本不是证书文件：必须被拦下。
+  printf 'this is not a certificate\n' > "$TMPDIR/e2e-notcert.txt"
+  NOTCERT_PATH="$(cygpath -m "$TMPDIR/e2e-notcert.txt" 2>/dev/null || echo "$TMPDIR/e2e-notcert.txt")"
+  curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
+    -F "csrf=${CSRF}" -F "tls_mode=manual" \
+    -F "tls_cert_file=@${NOTCERT_PATH}" \
+    -F "tls_key_file=@${OTHERKEY_PATH}" \
+    -o "$TMPDIR/e9.html"
+  grep -q '没有可解析的证书' "$TMPDIR/e9.html" && ok "上传非证书文件被拦截" || fail "上传非证书文件未被拦截"
 
   if [[ -f "$CERT_FILE" && -f "$CERT_BAK" ]]; then
     if cmp -s "$CERT_FILE" "$CERT_BAK"; then

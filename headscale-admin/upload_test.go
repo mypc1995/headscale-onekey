@@ -61,7 +61,7 @@ func TestReadUploadedPair(t *testing.T) {
 	if field != "" || code != "" {
 		t.Fatalf("上传应被接受，得到 (%q, %q)", field, code)
 	}
-	if field, code := checkPastedPair(up.cert, up.key); field != "" || code != "" {
+	if field, code := checkCertPair(up.cert, up.key); field != "" || code != "" {
 		t.Fatalf("上传得到的证书链应通过配对与链校验，得到 (%q, %q)", field, code)
 	}
 	certs := parseCertChain(up.cert)
@@ -99,7 +99,7 @@ func TestReadUploadedPairSortsChain(t *testing.T) {
 	if certs[2].Subject.CommonName != "Test Root CA" {
 		t.Fatalf("第 3 张应是根 CA，得到 %q", certs[2].Subject.CommonName)
 	}
-	if field, code := checkPastedPair(up.cert, up.key); field != "" || code != "" {
+	if field, code := checkCertPair(up.cert, up.key); field != "" || code != "" {
 		t.Fatalf("重排后应通过链校验，得到 (%q, %q)", field, code)
 	}
 }
@@ -116,7 +116,7 @@ func TestReadUploadedPairSelfSignedOnly(t *testing.T) {
 	if field != "" || code != "" {
 		t.Fatalf("上传应被接受，得到 (%q, %q)", field, code)
 	}
-	if field, code := checkPastedPair(up.cert, up.key); field != "" || code != "" {
+	if field, code := checkCertPair(up.cert, up.key); field != "" || code != "" {
 		t.Fatalf("自签证书应通过校验，得到 (%q, %q)", field, code)
 	}
 }
@@ -164,9 +164,9 @@ func TestReadUploadedPairErrors(t *testing.T) {
 	_ = interPEM
 }
 
-// TestReadUploadedPairNoUpload 没选文件时不算上传，应回落到粘贴的文本。
+// TestReadUploadedPairNoUpload 没选文件时不算上传，应沿用服务器上现有证书。
 func TestReadUploadedPairNoUpload(t *testing.T) {
-	req := newUploadRequest(t, nil, map[string]string{"tls_mode": "manual", "tls_cert_pem": "abc"})
+	req := newUploadRequest(t, nil, map[string]string{"tls_mode": "manual"})
 	up, field, code := readUploadedPair(req)
 	if field != "" || code != "" {
 		t.Fatalf("没有上传文件时不应报错，得到 (%q, %q)", field, code)
@@ -190,7 +190,7 @@ func TestReadUploadedPairMismatchedKey(t *testing.T) {
 	if field != "" || code != "" {
 		t.Fatalf("上传解析本身应成功，得到 (%q, %q)", field, code)
 	}
-	if field, code := checkPastedPair(up.cert, up.key); field != "cert_pem" || code != "cfg.err.pairMismatch" {
+	if field, code := checkCertPair(up.cert, up.key); field != "cert_pem" || code != "cfg.err.pairMismatch" {
 		t.Fatalf("配对不匹配应被拦下，得到 (%q, %q)", field, code)
 	}
 }

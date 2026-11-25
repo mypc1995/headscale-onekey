@@ -35,7 +35,6 @@ type ConfigPage struct {
 
 	// SSL 证书
 	TLSMode       string // letsencrypt | manual | http
-	TLSInputMode  string // 手动证书的输入方式：upload（上传文件）| paste（粘贴文本）
 	LEHostname    string
 	ACMEEmail     string
 	ACMEURL       string
@@ -45,7 +44,7 @@ type ConfigPage struct {
 	CertPath      string // 写入 headscale 配置的 tls_cert_path
 	KeyPath       string // 写入 headscale 配置的 tls_key_path
 
-	// 手动证书：用户直接粘贴的 PEM 文本，仅在本次请求内使用，不回显、不落库
+	// 手动证书：本次提交的证书链与私钥文本，仅在本次请求内使用，不回显、不落库
 	CertPEM string
 	KeyPEM  string
 
@@ -527,7 +526,7 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 		}
 	case "manual":
 		if p.CertPEM == "" && p.KeyPEM == "" {
-			// 没有重新粘贴：沿用服务器上已有的证书文件，但必须真实可用。
+			// 没有重新上传：沿用服务器上已有的证书文件，但必须真实可用。
 			if p.CertPath == "" || p.KeyPath == "" {
 				e["cert_pem"] = tr(lang, "cfg.err.certRequired")
 			} else if !fileExists(p.CertPath) || !fileExists(p.KeyPath) {
@@ -535,7 +534,7 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 			} else if _, err := tls.LoadX509KeyPair(p.CertPath, p.KeyPath); err != nil {
 				e["cert_pem"] = tr(lang, "cfg.err.pairMismatch")
 			}
-		} else if field, code := checkPastedPair(p.CertPEM, p.KeyPEM); code != "" {
+		} else if field, code := checkCertPair(p.CertPEM, p.KeyPEM); code != "" {
 			e[field] = tr(lang, code)
 		}
 	case "http":
@@ -545,16 +544,16 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 	return e
 }
 
-// ---------- 手动证书（上传文件或粘贴文本） ----------
+// ---------- 手动证书（上传文件） ----------
 
 // manualCertDir 是手动证书的固定落盘位置，headscale 进程要能读到。
 // 声明成变量是为了让测试能指向临时目录；生产上始终是下面这个路径。
 var manualCertDir = "/etc/headscale/certs"
 
-// checkPastedPair 校验粘贴的证书与私钥文本，返回出错字段与 i18n 键；通过时两者都为空。
-func checkPastedPair(certPEM, keyPEM string) (field, code string) {
+// checkCertPair 校验证书链与私钥，返回出错字段与 i18n 键；通过时两者都为空。
+func checkCertPair(certPEM, keyPEM string) (field, code string) {
 	if certPEM == "" || keyPEM == "" {
-		return "cert_pem", "cfg.err.pasteBoth"
+		return "cert_pem", "cfg.err.pairBoth"
 	}
 	cb, _ := pem.Decode([]byte(certPEM))
 	if cb == nil || cb.Type != "CERTIFICATE" {
@@ -661,9 +660,9 @@ func buildChainPEM(leafPEM, extraPEM string) (string, error) {
 	return buf.String(), nil
 }
 
-// checkCertChain 校验粘贴的是不是完整证书链。
+// checkCertChain 校验上传的是不是完整证书链。
 //
-// 只粘叶子证书（漏掉中间 CA）时，服务端会只下发叶子：浏览器能自己补中间证书，
+// 只上传叶子证书（漏掉中间 CA）时，服务端会只下发叶子：浏览器能自己补中间证书，
 // 但 Tailscale 客户端（Go 写的 tailscaled 不做 AIA 自动补链）会直接报
 // x509: certificate signed by unknown authority，连控制服务都上不去，
 // 表现为「连不上内置 DERP 中继」这类完全看不出原因的健康告警。
@@ -705,7 +704,7 @@ func parsesPrivateKey(der []byte) bool {
 	return false
 }
 
-// saveManualCert 把粘贴的证书文本写入 manualCertDir，返回写入后的路径与回滚函数。
+// saveManualCert 把上传的证书文本写入 manualCertDir，返回写入后的路径与回滚函数。
 // 配置最终没能应用时，调用方用回滚函数还原旧文件。
 func saveManualCert(certPEM, keyPEM string) (certPath, keyPath string, rollback func(), err error) {
 	if err := os.MkdirAll(manualCertDir, 0755); err != nil {

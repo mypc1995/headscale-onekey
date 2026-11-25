@@ -1021,18 +1021,17 @@ func formField(r *http.Request, key string) (string, bool) {
 	return strings.TrimSpace(r.Form.Get(key)), true
 }
 
-// settingsTLS 保存证书方式。手动方式可以上传证书文件（公钥/中间证书/私钥），
-// 也可以粘贴 PEM 文本；校验通过后写入固定位置，再交给 headscale 配置使用。
+// settingsTLS 保存证书方式。手动方式接收上传的证书文件（公钥/中间证书/私钥），
+// 校验通过后写入固定位置，再交给 headscale 配置使用。
 func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	lang := langFrom(r)
-	// 证书支持文件上传，表单是 multipart：先解析（CSRF 令牌也在 multipart 字段里），
+	// 证书以文件上传，表单是 multipart：先解析（CSRF 令牌也在 multipart 字段里），
 	// 再做权限与令牌校验。请求体大小同时受限，防止超大上传把内存打满。
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 		if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
 			p := a.hs.loadConfigPage(lang)
 			p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
-			p.TLSInputMode = strings.TrimSpace(r.FormValue("tls_input_mode"))
 			p.Errors = map[string]string{"cert_pem": tr(lang, "cfg.err.uploadTooLarge")}
 			p.Warnings = configWarnings(p, lang)
 			a.renderSettings(w, r, p)
@@ -1045,10 +1044,6 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	p := a.hs.loadConfigPage(lang)
 	p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
-	p.TLSInputMode = strings.TrimSpace(r.FormValue("tls_input_mode"))
-	if p.TLSInputMode == "" {
-		p.TLSInputMode = "upload"
-	}
 	if v, ok := formField(r, "acme_email"); ok {
 		p.ACMEEmail = v
 	}
@@ -1064,9 +1059,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	if v, ok := formField(r, "tls_letsencrypt_cache_dir"); ok && v != "" {
 		p.LECacheDir = v
 	}
-	p.CertPEM = strings.TrimSpace(r.FormValue("tls_cert_pem"))
-	p.KeyPEM = strings.TrimSpace(r.FormValue("tls_key_pem"))
-	// 选了文件就以文件内容为准（上传优先于粘贴）。
+	// 手动方式的证书来自上传的文件；没选文件就沿用服务器上现有的证书。
 	if up, field, code := readUploadedPair(r); code != "" {
 		p.Errors = map[string]string{field: tr(lang, code)}
 		p.Warnings = configWarnings(p, lang)
@@ -1082,7 +1075,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		p.LEHostname = host
 		p.CertPath, p.KeyPath = "", ""
 	case "manual":
-		// 沿用已配置的证书路径；粘贴了新内容会在下面覆盖。
+		// 沿用已配置的证书路径；上传了新内容会在下面覆盖。
 		p.LEHostname = ""
 	case "http":
 		p.LEHostname, p.CertPath, p.KeyPath = "", "", ""
@@ -1098,7 +1091,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 只有手动方式且确实粘贴了内容时才落盘，避免空提交覆盖已有证书。
+	// 只有手动方式且确实上传了内容时才落盘，避免空提交覆盖已有证书。
 	rollback := func() {}
 	if p.TLSMode == "manual" && p.CertPEM != "" {
 		certPath, keyPath, undo, err := saveManualCert(p.CertPEM, p.KeyPEM)
@@ -1135,7 +1128,7 @@ type uploadPair struct {
 }
 
 // readUploadedPair 读取上传的证书文件：公钥证书（叶子）、中间证书、私钥。
-// 返回出错字段与 i18n 键；两者都空表示没有上传任何文件（应回落到粘贴的文本）。
+// 返回出错字段与 i18n 键；两者都空表示没有上传任何文件（应沿用服务器上现有证书）。
 func readUploadedPair(r *http.Request) (uploadPair, string, string) {
 	if r.MultipartForm == nil {
 		return uploadPair{}, "", ""
