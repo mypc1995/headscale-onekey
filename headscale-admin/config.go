@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/mail"
 	"net/url"
 	"os"
 	"os/exec"
@@ -36,7 +35,6 @@ type ConfigPage struct {
 	// SSL 证书
 	TLSMode       string // letsencrypt | manual | http
 	LEHostname    string
-	ACMEEmail     string
 	ACMEURL       string
 	ChallengeType string
 	LEListen      string
@@ -116,7 +114,6 @@ func (c *HSClient) loadConfigPage(lang string) *ConfigPage {
 	p.PrefixV4 = nestedValue(content, "prefixes", "v4")
 	p.PrefixV6 = nestedValue(content, "prefixes", "v6")
 	p.LEHostname = topValue(content, "tls_letsencrypt_hostname")
-	p.ACMEEmail = topValue(content, "acme_email")
 	p.ACMEURL = topValue(content, "acme_url")
 	p.CertPath = topValue(content, "tls_cert_path")
 	p.KeyPath = topValue(content, "tls_key_path")
@@ -512,11 +509,6 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 			e["tls_letsencrypt_hostname"] = tr(lang, "cfg.err.fqdn")
 		} else if ip := net.ParseIP(p.LEHostname); ip != nil {
 			e["tls_letsencrypt_hostname"] = tr(lang, "cfg.err.fqdn")
-		}
-		if p.ACMEEmail != "" {
-			if _, err := mail.ParseAddress(p.ACMEEmail); err != nil || !strings.Contains(p.ACMEEmail, ".") {
-				e["acme_email"] = tr(lang, "cfg.err.email")
-			}
 		}
 		if p.ChallengeType != "HTTP-01" && p.ChallengeType != "TLS-ALPN-01" {
 			e["tls_letsencrypt_challenge_type"] = tr(lang, "cfg.err.challenge")
@@ -956,7 +948,6 @@ func (c *HSClient) buildConfig(p *ConfigPage, section string) (string, error) {
 			next = deleteNestedKey(next, "prefixes", "v6")
 		}
 	case "tls":
-		next = setTopKey(next, "acme_email", yamlScalar(p.ACMEEmail))
 		if p.ACMEURL != "" {
 			next = setTopKey(next, "acme_url", yamlScalar(p.ACMEURL))
 		}

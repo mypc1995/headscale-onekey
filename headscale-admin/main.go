@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -35,6 +38,7 @@ type App struct {
 	staticDir  string
 	speed      *speedReporter
 	login      *loginGuard
+	captcha    *captchaStore
 	// kdfSem 是口令校验的并发闸门，容量决定同时能跑几个 PBKDF2。
 	// 见 newKDFFence。
 	kdfSem chan struct{}
@@ -115,6 +119,10 @@ func main() {
 		return
 	}
 
+	// 静态资源版本号：启动时按 static 目录下的文件内容算一个哈希。
+	// 样式和脚本的 URL 带上它，浏览器拿到的就是新 URL，不会再吃旧缓存。
+	assetVer := assetVersion(*staticDir)
+
 	funcs := template.FuncMap{
 		"field":      fieldValue,
 		"nodeName":   nodeDisplayName,
@@ -135,6 +143,9 @@ func main() {
 		"yearNow": func() int { return time.Now().Year() },
 		"t":       tr,
 		"icon":    icon,
+		"asset": func(name string) string {
+			return "/static/" + name + "?v=" + assetVer
+		},
 		"langName": func(l string) string {
 			if l == "en" {
 				return "English"
@@ -174,14 +185,15 @@ func main() {
 		store: store, sessions: NewSessionManager(store.DB, secure), hs: hs, net: NewNetMonitor(),
 		host: NewHostMonitor(), nodes: NewNodeMonitor(hs, reporter.data), joinKeys: newJoinKeyStore(), apiKeys: newJoinKeyStore(), thresholds: defaultAlertThresholds(),
 		tmpl: tmpl, port: *port, tplDir: *tplDir, staticDir: *staticDir, dataFile: *dbFile,
-		speed: reporter, login: newLoginGuard(), kdfSem: newKDFFence(),
+		speed: reporter, login: newLoginGuard(), kdfSem: newKDFFence(), captcha: newCaptchaStore(),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("POST /login", a.loginPost)
+	mux.HandleFunc("GET /login/captcha.png", a.captchaImage)
 	mux.HandleFunc("GET /lang", a.setLanguage)
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(*staticDir))))
+	mux.Handle("/static/", a.staticHandler(*staticDir))
 	mux.Handle("GET /health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
 	// 节点侧上报入口：走独立令牌认证，不经过管理员会话，因此挂在外层 mux 上。
 	mux.HandleFunc("POST /api/speed", reporter.handle)
@@ -494,11 +506,77 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	lang := langFrom(r)
-	data := map[string]any{"Error": "", "Lang": lang}
+	data := a.loginPageData(r, lang)
 	// 改密之后旧会话会被吊销，这里给一句说明，别让人以为是登录失败。
 	if r.URL.Query().Get("passchanged") == "1" {
 		data["Notice"] = tr(lang, "msg.passChangedRelogin")
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = a.tmpl.ExecuteTemplate(w, "login", data)
+}
+
+// assetVersion 按 static 目录下的文件内容算一个版本号。
+//
+// 样式和脚本的 URL 不带版本号时，浏览器会按「文件年龄的 10%」做启发式缓存：
+// 上线新版样式后，老浏览器的缓存还能撑十几个小时，用户看到的还是旧界面。
+// URL 里带上内容哈希之后，每次改动都是一个新 URL，浏览器必然重新取。
+func assetVersion(dir string) string {
+	h := sha256.New()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "0"
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		h.Write([]byte(name))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+// staticHandler 提供静态资源（样式表、脚本）。
+//
+// 每次都要回源校验，不能让浏览器自己缓存：样式和脚本的 URL 不带版本号，
+// 而 http.FileServer 只发 Last-Modified，浏览器会按「文件年龄的 10%」做启发式
+// 缓存——上线新版样式后，老浏览器的缓存还能撑上十几个小时，用户看到的界面
+// 是旧版（本次加验证码就踩到了：新样式没生效，验证码图片换行错位）。
+// no-cache 的意思是「可以存，但用之前必须问服务器一次」，服务器回 304，
+// 流量很小，同时保证拿到的一定是最新版本。
+func (a *App) staticHandler(dir string) http.Handler {
+	fs := http.StripPrefix("/static/", http.FileServer(http.Dir(dir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		fs.ServeHTTP(w, r)
+	})
+}
+
+// loginPageData 组装登录页的数据，公网来源还要带上验证码。
+func (a *App) loginPageData(r *http.Request, lang string) map[string]any {
+	data := map[string]any{"Error": "", "Lang": lang}
+	if a.captcha != nil && a.captchaRequired(r) {
+		data["Captcha"] = true
+		// 图片 URL 里带一个随机数，避免浏览器用缓存里的旧图。
+		if nonce, err := randomHex(8); err == nil {
+			data["CaptchaNonce"] = nonce
+		}
+	}
+	return data
+}
+
+// renderLogin 重新渲染登录页（出错时用），验证码也要重新取。
+func (a *App) renderLogin(w http.ResponseWriter, r *http.Request, lang, errMsg string) {
+	data := a.loginPageData(r, lang)
+	data["Error"] = errMsg
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = a.tmpl.ExecuteTemplate(w, "login", data)
 }
@@ -520,13 +598,27 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	user := strings.TrimSpace(r.FormValue("username"))
 	ip := clientIP(r)
 
+	// 验证码先于口令校验：验证码不对就不跑 PBKDF2，攻击者烧不掉 CPU。
+	if a.captcha != nil && a.captchaRequired(r) {
+		token := ""
+		if c, err := r.Cookie(captchaCookie); err == nil {
+			token = c.Value
+		}
+		if !a.captcha.verify(token, r.FormValue("captcha")) {
+			// 猜验证码也算一次失败，纳入限速：否则可以无限次刷图试答案。
+			a.login.fail(user, ip)
+			a.renderLogin(w, r, lang, tr(lang, "login.captchaWrong"))
+			return
+		}
+	}
+
 	// 先看惩罚：被锁定时直接拒绝，不再消耗一次 KDF；
 	// 只是延迟时先等一下，抬高爆破的时间成本。
 	wait, locked := a.login.penalty(user, ip)
 	if locked {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusTooManyRequests)
-		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(lang, "login.tooMany"), "Lang": lang})
+		a.renderLogin(w, r, lang, tr(lang, "login.tooMany"))
 		return
 	}
 	if wait > 0 {
@@ -541,15 +633,14 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) {
 	if !got {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusTooManyRequests)
-		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(lang, "login.busy"), "Lang": lang})
+		a.renderLogin(w, r, lang, tr(lang, "login.busy"))
 		return
 	}
 	admin, ok := a.store.Verify(user, r.FormValue("password"))
 	release()
 	if !ok {
 		a.login.fail(user, ip)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = a.tmpl.ExecuteTemplate(w, "login", map[string]any{"Error": tr(lang, "login.error"), "Lang": lang})
+		a.renderLogin(w, r, lang, tr(lang, "login.error"))
 		return
 	}
 	a.login.success(user, ip)

@@ -186,6 +186,34 @@ info "验证登录与访问控制"
 curl -s -X POST "$BASE/login" -d 'username=admin&password=wrong' | grep -c '用户名或密码错误' >/dev/null && ok "错误密码被拒绝" || fail "错误密码未被拒绝"
 [[ "$(curl -s -c "$JAR" -X POST "$BASE/login" -d 'username=admin&password=testpass123' -o /dev/null -w '%{http_code}')" == "303" ]] && ok "正确凭据登录成功" || fail "登录失败"
 
+info "验证图形验证码"
+# 回环来源（本机 e2e、单机部署、运维脚本）不该被验证码拦住。
+curl -s "$BASE/login" | grep -q 'name="captcha"' && fail "回环来源的登录页仍要求验证码" || ok "回环来源免验证码"
+# 同机反代的公网请求：来源还是回环，但 Host 是公网域名——这种必须有验证码，
+# 否则一部署反代，验证码就形同虚设。
+curl -s -H 'Host: ts.example.com' "$BASE/login" | grep -q 'name="captcha"' && ok "反代公网请求仍要求验证码" || fail "反代公网请求未要求验证码"
+# 验证码接口：返回 PNG，并下发令牌 Cookie。
+cap_code="$(curl -s -D "$TMPDIR/cap.head" -o "$TMPDIR/cap.png" -c "$TMPDIR/cap.jar" -w '%{http_code}' "$BASE/login/captcha.png")"
+[[ "$cap_code" == "200" ]] && ok "验证码图片接口返回 200" || fail "验证码图片接口返回 ${cap_code}"
+grep -qi 'content-type: image/png' "$TMPDIR/cap.head" && ok "验证码图片类型为 image/png" || fail "验证码图片类型不对"
+grep -q 'hsa_cap' "$TMPDIR/cap.jar" && ok "验证码令牌 Cookie 已下发" || fail "验证码令牌 Cookie 未下发"
+head -c 4 "$TMPDIR/cap.png" | od -An -tx1 | tr -d ' \n' | grep -q '89504e47' && ok "验证码是合法 PNG" || fail "验证码不是合法 PNG"
+# 缺验证码的登录必须被拒（用独立用户名，不去扰动 admin 账号的失败计数）。
+code="$(curl -s -o "$TMPDIR/cap-login.html" -w '%{http_code}' -H 'Host: ts.example.com' -X POST "$BASE/login" \
+  -d 'username=captcha-probe&password=testpass123')"
+[[ "$code" != "303" ]] && ok "缺验证码的登录被拒（${code}）" || fail "缺验证码的登录被放行"
+grep -q '验证码错误' "$TMPDIR/cap-login.html" && ok "缺验证码时提示验证码错误" || fail "缺验证码时未提示验证码错误"
+# 静态资源必须每次回源校验：样式和脚本的 URL 不带版本号，浏览器会拿启发式缓存
+# 把旧样式留上十几个小时，上线新版样式后用户看到的还是旧界面。
+curl -s -D "$TMPDIR/static.head" -o /dev/null "$BASE/static/app.css"
+grep -qi 'cache-control: no-cache' "$TMPDIR/static.head" && ok "静态资源不长期缓存" || fail "静态资源缓存策略不对"
+# 静态资源 URL 要带版本号：老浏览器已经在缓存里的旧样式，URL 不变就一直用旧的。
+curl -s "$BASE/login" | grep -q 'app.css?v=' && ok "静态资源 URL 带版本号" || fail "静态资源 URL 没有版本号"
+# 登录页必须加载自己的脚本：验证码「点图换一张」的逻辑在 login.js 里。
+# 之前这段逻辑放在 app.js，而登录页压根没加载 app.js，点图片毫无反应。
+curl -s "$BASE/login" | grep -q 'login.js?v=' && ok "登录页加载了专用脚本" || fail "登录页没有加载专用脚本"
+curl -s "$BASE/login" | grep -q 'app.js?v=' && fail "登录页仍在加载整包 app.js" || ok "登录页不加载整包 app.js"
+
 info "验证跳转目标与登录限速"
 # 语言切换的跳转目标必须是站内地址：/\evil.com 会被浏览器归一化成 //evil.com。
 loc="$(curl -s -o /dev/null -w '%{redirect_url}' "$BASE/lang?lang=zh&next=/%5Cevil.com")"
@@ -341,11 +369,12 @@ curl -s -b "$JAR" -X POST "$BASE/settings/network" \
 grep -q '已勾选启用 IPv6' "$TMPDIR/e2c.html" && ok "勾选 IPv6 却留空被拦截" || fail "勾选 IPv6 留空未被拦截"
 
 curl -s -b "$JAR" -X POST "$BASE/settings/tls" \
-  -F "csrf=${CSRF}" -F "tls_mode=letsencrypt" -F "tls_letsencrypt_hostname=" -F "acme_email=bad" \
+  -F "csrf=${CSRF}" -F "tls_mode=letsencrypt" -F "tls_letsencrypt_hostname=" \
   -F "tls_letsencrypt_challenge_type=HTTP-01" -F "tls_letsencrypt_listen=:http" \
   -F "tls_letsencrypt_cache_dir=/var/lib/headscale/cache" -o "$TMPDIR/e3.html"
 grep -q '证书域名不能为空' "$TMPDIR/e3.html" && ok "缺少证书域名被拦截" || fail "缺少证书域名未被拦截"
-grep -q '邮箱格式不正确' "$TMPDIR/e3.html" && ok "非法邮箱被拦截" || fail "非法邮箱未被拦截"
+# 到期通知邮箱已下线：配置页不该再有这个字段（headscale 的 acme_email 由人工维护证书时用不到）。
+grep -q 'name="acme_email"' "$TMPDIR/settings.html" && fail "配置页仍保留到期通知邮箱字段" || ok "配置页已移除到期通知邮箱字段"
 
 # 多张链里第 3 张及以后接错也必须被拦下（线上事故的升级版：链能连到中间 CA，
 # 但最后一张贴错，只有一部分客户端建不出链，症状更隐蔽）。

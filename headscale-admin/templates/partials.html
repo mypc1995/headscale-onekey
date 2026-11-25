@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}} · {{t .Lang "app.name"}}</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="{{asset "app.css"}}">
 <script>document.documentElement.dataset.theme=localStorage.getItem('hsa-theme')||'light';</script>
 </head>
 <body>
@@ -87,7 +87,7 @@
     </div>
   </div>
 </div>
-<script src="/static/app.js"></script>
+<script src="{{asset "app.js"}}"></script>
 </body>
 </html>{{end}}
 
@@ -105,7 +105,7 @@
 
 {{define "login"}}<!doctype html>
 <html lang="{{if eq .Lang "en"}}en{{else}}zh-CN{{end}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{t .Lang "login.title"}} · {{t .Lang "app.name"}}</title><link rel="stylesheet" href="/static/app.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{t .Lang "login.title"}} · {{t .Lang "app.name"}}</title><link rel="stylesheet" href="{{asset "app.css"}}"></head>
 <body class="login-page">
 <div class="login-box">
   <div class="login-brand"><span class="sidebar-logo">HS</span><span>{{t .Lang "app.name"}}</span></div>
@@ -116,6 +116,14 @@
   <form method="post" action="/login">
     <div class="form-group"><label class="form-label" for="u">{{t .Lang "label.username"}}</label><input class="form-input" id="u" name="username" autocomplete="username" required autofocus></div>
     <div class="form-group"><label class="form-label" for="p">{{t .Lang "label.password"}}</label><input class="form-input" id="p" type="password" name="password" autocomplete="current-password" required></div>
+    {{if .Captcha}}<div class="form-group">
+      <label class="form-label" for="cap">{{t .Lang "login.captcha"}}</label>
+      <div class="captcha-row">
+        <input class="form-input" id="cap" name="captcha" autocomplete="off" inputmode="numeric" maxlength="8" placeholder="{{t .Lang "login.captchaPlaceholder"}}" required>
+        <img class="captcha-img" id="captcha-img" src="/login/captcha.png?n={{.CaptchaNonce}}" width="160" height="56" alt="{{t .Lang "login.captcha"}}" title="{{t .Lang "login.captchaRefresh"}}">
+      </div>
+      <span class="field-hint">{{t .Lang "login.captchaHint"}}</span>
+    </div>{{end}}
     <button class="btn btn-primary btn-block" type="submit">{{icon "lock" 15}} {{t .Lang "login.submit"}}</button>
   </form>
   <p class="login-hint">{{t .Lang "login.hint"}}</p>
@@ -124,5 +132,6 @@
     <a href="/lang?lang=en&next=/login" class="{{if eq .Lang "en"}}active{{end}}">English</a>
   </div>
 </div>
+<script src="{{asset "login.js"}}"></script>
 </body>
 </html>{{end}}

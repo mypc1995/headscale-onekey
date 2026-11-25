@@ -1081,9 +1081,6 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	p := a.hs.loadConfigPage(lang)
 	p.TLSMode = strings.TrimSpace(r.FormValue("tls_mode"))
-	if v, ok := formField(r, "acme_email"); ok {
-		p.ACMEEmail = v
-	}
 	if v, ok := formField(r, "acme_url"); ok && v != "" {
 		p.ACMEURL = v
 	}

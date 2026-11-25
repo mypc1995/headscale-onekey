@@ -465,6 +465,15 @@ textarea.form-input { font-family: "JetBrains Mono", ui-monospace, SFMono-Regula
 .login-lang a { font-size: .86rem; padding: 4px 10px; border: var(--border-width) solid transparent; border-radius: var(--radius-sm); color: var(--text-tertiary); }
 .login-lang a.active { border-color: var(--border); background: var(--yellow); color: #1a1a2e; font-weight: 800; }
 
+/* 图形验证码 */
+.captcha-row { display: flex; gap: 10px; align-items: stretch; }
+.captcha-row .form-input { flex: 1 1 auto; min-width: 0; }
+.captcha-img {
+  flex: 0 0 auto; border-radius: var(--radius-sm); border: var(--border-width) solid var(--border);
+  background: #f3f5f9; cursor: pointer; display: block;
+}
+.captcha-img:hover { filter: brightness(.96); }
+
 
 /* 实时网速面板 */
 .net-rates { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
