@@ -38,6 +38,14 @@ const (
 	hsLocalTimeout = 10 * time.Second
 	// hsCertbotTimeout 是 certbot renew：它要出网访问 Let's Encrypt，慢是正常的。
 	hsCertbotTimeout = 180 * time.Second
+	// hsListTTL 是列表结果的缓存时长（总览页用）。
+	//
+	// 取 5 秒：总览页的数字最多旧 5 秒，而连续刷新时能省掉全部进程开销。
+	hsListTTL = 5 * time.Second
+	// hsVersionTTL 是 headscale 版本号的缓存时长。
+	hsVersionTTL = 10 * time.Minute
+	// hsCertTTL 是证书到期时间的缓存时长。
+	hsCertTTL = 5 * time.Minute
 )
 
 // hsCallTimeoutEnv 是调用 headscale 命令行的超时时间，可用环境变量调短。

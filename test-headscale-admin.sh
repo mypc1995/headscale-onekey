@@ -220,6 +220,29 @@ curl -s "$BASE/login" | grep -q 'app.css?v=' && ok "静态资源 URL 带版本�
 curl -s "$BASE/login" | grep -q 'login.js?v=' && ok "登录页加载了专用脚本" || fail "登录页没有加载专用脚本"
 curl -s "$BASE/login" | grep -q 'app.js?v=' && fail "登录页仍在加载整包 app.js" || ok "登录页不加载整包 app.js"
 
+info "验证安全响应头"
+curl -s -D "$TMPDIR/hdr.txt" -o /dev/null "$BASE/login"
+grep -qi '^x-frame-options: DENY' "$TMPDIR/hdr.txt" && ok "已设置 X-Frame-Options（防点击劫持）" || fail "缺少 X-Frame-Options"
+grep -qi '^x-content-type-options: nosniff' "$TMPDIR/hdr.txt" && ok "已设置 nosniff" || fail "缺少 nosniff"
+grep -qi '^referrer-policy: same-origin' "$TMPDIR/hdr.txt" && ok "已设置 Referrer-Policy" || fail "缺少 Referrer-Policy"
+grep -qi "content-security-policy:.*default-src 'self'" "$TMPDIR/hdr.txt" && ok "已设置 CSP" || fail "缺少 CSP"
+grep -qi "content-security-policy:.*script-src 'self'" "$TMPDIR/hdr.txt" && ok "CSP 禁止内联脚本" || fail "CSP 的 script-src 不对"
+# CSP 不放开内联脚本：模板里出现内联脚本会被浏览器直接挡掉，功能静默失效。
+curl -s -b "$JAR" "$BASE/settings" -o "$TMPDIR/settings2.html"
+grep -q '<script>' "$TMPDIR/settings2.html" && fail "页面里有内联脚本（CSP 会挡掉）" || ok "页面里没有内联脚本"
+
+info "验证总览页不再反复起 headscale 进程"
+# 总览页原本每次刷新要起 5 个 headscale 进程（version/cert/users/nodes/keys）。
+# 现在计数走 5 秒缓存、版本与证书走长缓存，重复刷新不该再起进程。
+curl -s -b "$JAR" "$BASE/" -o /dev/null
+: >"$TMPDIR/hs-calls.log"
+for _ in 1 2 3 4 5; do
+  curl -s -b "$JAR" "$BASE/" -o /dev/null
+done
+calls="$(wc -l <"$TMPDIR/hs-calls.log" | tr -d ' ')"
+# 允许 1 次：节点监控每 15 秒自己采一次，可能正好落在窗口里。
+[[ "$calls" -le 1 ]] && ok "连续 5 次刷新总览页只起了 ${calls} 个 headscale 进程" || fail "连续 5 次刷新起了 ${calls} 个 headscale 进程（缓存没生效）"
+
 info "验证 headscale 卡死时界面不挂死"
 # headscale 卡住时，管理界面必须在超时内返回，不能一直挂着。
 # 这条守着「一次卡死把整个界面拖死」这个故障：旧实现没有超时，

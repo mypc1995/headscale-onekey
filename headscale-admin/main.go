@@ -217,7 +217,7 @@ func main() {
 	// 慢速连接（Slowloris）可以把连接数占满，拖垮整台机器。
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           securityHeaders(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      120 * time.Second,
@@ -515,6 +515,46 @@ func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	_ = a.tmpl.ExecuteTemplate(w, "login", data)
 }
 
+// securityHeaders 给每个响应加上安全响应头。
+//
+// 管理界面直接暴露在公网上，缺这些头的后果分别是：
+//   - 没有 X-Frame-Options：别人可以把管理界面嵌进自己的页面，
+//     诱导管理员点「保存」，等于替别人执行操作（点击劫持）；
+//   - 没有 CSP：一次 XSS 就能把会话 Cookie 与 CSRF 令牌一起拿走；
+//   - 没有 nosniff：浏览器可能把返回内容当成别的类型解析；
+//   - 没有 HSTS：用户第一次走 http 就可能被链路上的设备降级。
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		// script-src 不带 'unsafe-inline'：页面上不允许再有内联脚本，
+		// 出现 XSS 就没有第二次机会（原先那段内联主题脚本已挪到 theme.js）。
+		// style-src 带 'unsafe-inline'：进度条宽度、主题色块用的是行内
+		// style 属性，那不是脚本，放宽这一项不引入脚本执行风险。
+		h.Set("Content-Security-Policy", strings.Join([]string{
+			"default-src 'self'",
+			"script-src 'self'",
+			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' data:",
+			"font-src 'self'",
+			"connect-src 'self'",
+			"object-src 'none'",
+			"base-uri 'none'",
+			"form-action 'self'",
+			"frame-ancestors 'none'",
+		}, "; "))
+		if r.TLS != nil {
+			// 只在直连 HTTPS 时加 HSTS。
+			// 反代终止 TLS 的部署里服务端看不到 r.TLS，
+			// 那边的 HSTS 要由反代自己加。
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // assetVersion 按 static 目录下的文件内容算一个版本号。
 //
 // 样式和脚本的 URL 不带版本号时，浏览器会按「文件年龄的 10%」做启发式缓存：
@@ -668,14 +708,16 @@ type dashboardData struct {
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
-	d := dashboardData{Service: "未知", Version: a.hs.Version(), Cert: certExpiry()}
-	if out, err := systemctl("is-active", "headscale"); err == nil {
-		d.Service = strings.TrimSpace(out)
+	d := dashboardData{Service: "未知", Version: a.hs.Version(), Cert: a.hs.CertExpiry()}
+	// 服务状态直接用监控快照里的：监控本来就在每 15 秒查一次 systemctl，
+	// 这里没必要再起一个进程。
+	if snap := a.nodes.Snapshot(); snap.Service != "" {
+		d.Service = snap.Service
 	}
-	if users, err := a.hs.Users(); err == nil {
+	if users, err := a.hs.cachedUsers(); err == nil {
 		d.Users = len(users)
 	}
-	if nodes, err := a.hs.Nodes(); err == nil {
+	if nodes, err := a.hs.cachedNodes(); err == nil {
 		d.Nodes = len(nodes)
 		for _, n := range nodes {
 			if strings.EqualFold(str(n["online"]), "true") {
@@ -689,10 +731,10 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			d.Recent = d.Recent[:6]
 		}
 	}
-	if v, err := a.hs.PreauthKeys(); err == nil {
+	if v, err := a.hs.cachedPreauthKeys(); err == nil {
 		d.PreauthKeys = len(v)
 	}
-	if v, err := a.hs.APIKeys(); err == nil {
+	if v, err := a.hs.cachedAPIKeys(); err == nil {
 		d.APIKeys = len(v)
 	}
 	a.render(w, r, "dashboard", d)

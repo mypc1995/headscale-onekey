@@ -178,7 +178,7 @@ func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
 		Thresholds: a.thresholds,
 		Service:    nodeSnap.Service,
 		Version:    a.hs.Version(),
-		Cert:       certExpiry(),
+		Cert:       a.hs.CertExpiry(),
 		Logs:       journal(80),
 		ConfigPath: a.hs.Config,
 		PolicyPath: a.hs.PolicyPath(lang),

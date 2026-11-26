@@ -31,9 +31,21 @@ type HSClient struct {
 	// timeout 是单次调用的最长等待时间；0 表示用环境变量或默认值。
 	timeout time.Duration
 	// exec 允许测试替换成假的执行器，用来模拟卡死与超时；nil 表示真跑子进程。
-	exec   execSplitFunc
-	Bin    string
-	Config string
+	exec execSplitFunc
+	// 下面这组是给「总览页」用的短 TTL 缓存。
+	//
+	// 总览页只显示计数与最近节点，几秒内的旧数据无所谓；
+	// 但每次刷新都起 5 个 headscale 进程就没必要了。
+	// 节点页、用户页不用这些缓存：改名、删除之后必须立刻看到最新结果。
+	nodesCache   ttlCache[[]map[string]any]
+	usersCache   ttlCache[[]HSUser]
+	preauthCache ttlCache[[]map[string]any]
+	apiCache     ttlCache[[]map[string]any]
+	// 版本号与证书到期时间变化极慢，缓存久一点。
+	versionCache ttlCache[string]
+	certCache    ttlCache[string]
+	Bin          string
+	Config       string
 }
 
 func NewHSClient() *HSClient {
@@ -219,9 +231,24 @@ func (c *HSClient) CreateAPIKey(expiration string) (string, error) {
 	return c.run("apikeys", "create", "--expiration", expiration)
 }
 
+// Version 返回 headscale 版本号，带缓存。
+//
+// 版本号要起一个 headscale 进程才能拿到，而它一年也变不了几次。
+// 缓存 10 分钟：headscale 升级之后最多 10 分钟显示旧版本。
 func (c *HSClient) Version() string {
-	// version 不查数据库，也不进闸门：它不该排在别的调用后面。
-	// 但仍然要有超时——headscale 卡住时不能让整页跟着卡。
+	if v, ok := c.versionCache.get(hsVersionTTL); ok {
+		return v
+	}
+	v := c.version()
+	if v == "未知" {
+		return v // 失败不缓存：下次再问一次
+	}
+	c.versionCache.set(v)
+	return v
+}
+
+// version 真正去问 headscale 版本。
+func (c *HSClient) version() string {
 	b, err := execCombined(context.Background(), c.callTimeout(), c.Bin, "version")
 	if err != nil {
 		return "未知"
@@ -231,6 +258,72 @@ func (c *HSClient) Version() string {
 		return lines[2]
 	}
 	return strings.TrimSpace(b)
+}
+
+// CertExpiry 返回证书到期时间，带 5 分钟缓存。
+//
+// 它要起一个 sh 去跑 openssl，代价不低；而证书一个月才换一次。
+func (c *HSClient) CertExpiry() string {
+	if v, ok := c.certCache.get(hsCertTTL); ok {
+		return v
+	}
+	v := certExpiry()
+	c.certCache.set(v)
+	return v
+}
+
+// cachedNodes 返回节点列表，带 5 秒缓存。
+//
+// 只有总览页用它：节点页要看到最新数据（改名、删除后立刻要生效）。
+func (c *HSClient) cachedNodes() ([]map[string]any, error) {
+	if v, ok := c.nodesCache.get(hsListTTL); ok {
+		return v, nil
+	}
+	v, err := c.Nodes()
+	if err != nil {
+		return nil, err
+	}
+	c.nodesCache.set(v)
+	return v, nil
+}
+
+// cachedUsers 返回用户列表，带 5 秒缓存（只给总览页数个数用）。
+func (c *HSClient) cachedUsers() ([]HSUser, error) {
+	if v, ok := c.usersCache.get(hsListTTL); ok {
+		return v, nil
+	}
+	v, err := c.Users()
+	if err != nil {
+		return nil, err
+	}
+	c.usersCache.set(v)
+	return v, nil
+}
+
+// cachedPreauthKeys 返回预授权密钥列表，带 5 秒缓存（只给总览页数个数用）。
+func (c *HSClient) cachedPreauthKeys() ([]map[string]any, error) {
+	if v, ok := c.preauthCache.get(hsListTTL); ok {
+		return v, nil
+	}
+	v, err := c.PreauthKeys()
+	if err != nil {
+		return nil, err
+	}
+	c.preauthCache.set(v)
+	return v, nil
+}
+
+// cachedAPIKeys 返回 API 密钥列表，带 5 秒缓存（只给总览页数个数用）。
+func (c *HSClient) cachedAPIKeys() ([]map[string]any, error) {
+	if v, ok := c.apiCache.get(hsListTTL); ok {
+		return v, nil
+	}
+	v, err := c.APIKeys()
+	if err != nil {
+		return nil, err
+	}
+	c.apiCache.set(v)
+	return v, nil
 }
 
 func str(v any) string {
