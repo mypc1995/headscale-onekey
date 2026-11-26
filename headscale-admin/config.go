@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -10,7 +11,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -267,7 +267,7 @@ func certbotBinary() string {
 func systemdShow(unit string, props ...string) map[string]string {
 	out := map[string]string{}
 	args := append([]string{"show", unit, "-p", strings.Join(props, ",")}, "--no-pager")
-	b, err := exec.Command("systemctl", args...).Output()
+	b, err := execCombined(context.Background(), hsLocalTimeout, "systemctl", args...)
 	if err != nil {
 		return out
 	}
@@ -746,7 +746,7 @@ func writeCertFiles(files map[string]string) (func(), error) {
 		}
 	}
 	// headscale 以 headscale 用户运行，证书必须让它可读（失败时保留 root 属主，仅影响排查提示）。
-	_ = exec.Command("chown", "-R", "headscale:headscale", manualCertDir).Run()
+	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "-R", "headscale:headscale", manualCertDir)
 	return restore, nil
 }
 
@@ -973,14 +973,14 @@ func (c *HSClient) ApplyConfig(next string, restart bool, lang string) (string, 
 	}
 	defer os.Remove(candidate)
 
-	out, err := exec.Command(c.Bin, "configtest", "-c", candidate).CombinedOutput()
-	ctOut := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(string(out), "")))
+	out, err := execCombined(context.Background(), hsWriteTimeout, c.Bin, "configtest", "-c", candidate)
+	ctOut := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(out, "")))
 	if err != nil {
 		// configtest 会真实初始化，可能留下 root 属主的运行文件。
-		_ = exec.Command("chown", "-R", "headscale:headscale", "/var/lib/headscale").Run()
+		_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "-R", "headscale:headscale", "/var/lib/headscale")
 		return "", errors.New(tr(lang, "cfg.err.configtest", ctOut))
 	}
-	_ = exec.Command("chown", "-R", "headscale:headscale", "/var/lib/headscale").Run()
+	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "-R", "headscale:headscale", "/var/lib/headscale")
 
 	old, err := os.ReadFile(c.Config)
 	if err != nil {
@@ -1068,8 +1068,8 @@ func certRenew(lang string) (string, error) {
 	if bin == "" {
 		return "", errors.New(tr(lang, "cfg.err.noCertbot"))
 	}
-	out, err := exec.Command(bin, "renew", "--non-interactive").CombinedOutput()
-	text := strings.TrimSpace(string(out))
+	out, err := execCombined(context.Background(), hsCertbotTimeout, bin, "renew", "--non-interactive")
+	text := strings.TrimSpace(out)
 	if err != nil {
 		return text, errors.New(tr(lang, "cfg.err.renewFail", text))
 	}

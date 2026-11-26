@@ -82,7 +82,13 @@ if [ -n "${FAKE_CMD_LOG:-}" ]; then
 fi
 case "$*" in
   *"list-routes"*) echo '[]' ;;
-  *"users list"*) echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
+  *"users list"*)
+    # 卡死模式：标记文件存在时，users list 一直不返回。
+    # 用来验证「headscale 卡住时管理界面不会跟着挂死」。
+    if [ -n "${FAKE_HANG_USERS:-}" ] && [ -f "$FAKE_HANG_USERS" ]; then
+      sleep 30
+    fi
+    echo '[{"id":1,"name":"default","created_at":{"seconds":1794889542,"nanos":0}}]' ;;
   *"nodes list"*) [ -s "$FAKE_NODES" ] && cat "$FAKE_NODES" || echo 'null' ;;
   *"preauthkeys list"*) [ -s "$FAKE_STATE" ] && cat "$FAKE_STATE" || echo '[]' ;;
   *"preauthkeys create"*)
@@ -168,7 +174,7 @@ printf '%s\n' '{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}' >"$TMPD
 
 PORT=$((39000 + RANDOM % 1000))
 : >"$TMPDIR/hs-calls.log"
-HSA_HEADSCALE_BIN="$HS_BIN" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" FAKE_CMD_LOG="$TMPDIR/hs-calls.log" "$TMPDIR/hsa" \
+HSA_HEADSCALE_BIN="$HS_BIN" HSA_CONFIG_FILE="$TMPDIR/config.yaml" FAKE_STATE="$TMPDIR/preauth-state.json" FAKE_NODES="$TMPDIR/nodes.json" FAKE_CMD_LOG="$TMPDIR/hs-calls.log" FAKE_HANG_USERS="$TMPDIR/hang-users" HSA_HS_CALL_TIMEOUT=3 "$TMPDIR/hsa" \
   -port "$PORT" -data "$TMPDIR/app.db" -legacy-json "$TMPDIR/admins.json" -templates "$SRC_ROOT/templates" -static "$SRC_ROOT/static" \
   -node-speed-token test-speed-token \
   >"$TMPDIR/server.log" 2>&1 &
@@ -213,6 +219,17 @@ curl -s "$BASE/login" | grep -q 'app.css?v=' && ok "静态资源 URL 带版本�
 # 之前这段逻辑放在 app.js，而登录页压根没加载 app.js，点图片毫无反应。
 curl -s "$BASE/login" | grep -q 'login.js?v=' && ok "登录页加载了专用脚本" || fail "登录页没有加载专用脚本"
 curl -s "$BASE/login" | grep -q 'app.js?v=' && fail "登录页仍在加载整包 app.js" || ok "登录页不加载整包 app.js"
+
+info "验证 headscale 卡死时界面不挂死"
+# headscale 卡住时，管理界面必须在超时内返回，不能一直挂着。
+# 这条守着「一次卡死把整个界面拖死」这个故障：旧实现没有超时，
+# 而且卡住的那个调用把闸门一直攥着，后面所有页面全堵死。
+: >"$TMPDIR/hang-users"
+code="$(curl -s --max-time 20 -o "$TMPDIR/hang.html" -w '%{http_code}' -b "$JAR" "$BASE/users")"
+rm -f "$TMPDIR/hang-users"
+[[ "$code" == "200" ]] && ok "headscale 卡死时页面仍然返回（${code}）" || fail "headscale 卡死时页面没返回（${code}）"
+# 超时之后闸门必须归还：下一次请求要能正常拿到数据。
+curl -s --max-time 10 -b "$JAR" "$BASE/users" | grep -q 'default' && ok "卡死超时后闸门已归还，页面恢复正常" || fail "卡死超时后闸门没归还，页面仍异常"
 
 info "验证跳转目标与登录限速"
 # 语言切换的跳转目标必须是站内地址：/\evil.com 会被浏览器归一化成 //evil.com。

@@ -1,18 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -24,7 +22,16 @@ type HSUser struct {
 }
 
 type HSClient struct {
-	mu     sync.Mutex
+	// gate 是 headscale 命令行的并发闸门：一次只放一个调用进去。
+	//
+	// 原来是一把 sync.Mutex，只能干等：持有者卡住时锁永远不放，
+	// 后面所有调用 headscale 的页面全部堵死。换成可取消的闸门之后，
+	// 等不到就明确报错，页面照样出得来。
+	gate hsGate
+	// timeout 是单次调用的最长等待时间；0 表示用环境变量或默认值。
+	timeout time.Duration
+	// exec 允许测试替换成假的执行器，用来模拟卡死与超时；nil 表示真跑子进程。
+	exec   execSplitFunc
 	Bin    string
 	Config string
 }
@@ -55,22 +62,56 @@ func safeText(s string) string {
 	return strings.ToValidUTF8(s, "�")
 }
 
+// callTimeout 返回单次调用的最长等待时间。
+func (c *HSClient) callTimeout() time.Duration {
+	if c.timeout > 0 {
+		return c.timeout
+	}
+	return hsCallTimeoutEnv()
+}
+
+// execSplit 执行命令；测试可以替换执行器来模拟卡死。
+func (c *HSClient) execSplit(ctx context.Context, name string, args ...string) (string, string, error) {
+	if c.exec != nil {
+		return c.exec(ctx, name, args...)
+	}
+	return runExec(ctx, name, args...)
+}
+
+// run 调用 headscale 命令行。
+//
+// 旧实现只有一把锁和一个没有超时的 cmd.Run()：headscale 一旦卡住，
+// 闸门就永远攥在它手里，所有依赖 headscale 的页面全部堵死。
+// 现在每次调用都有超时：等闸门与执行共用同一个预算，
+// 超时后杀掉进程组并把闸门还回去。
 func (c *HSClient) run(args ...string) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	return c.runCtx(context.Background(), args...)
+}
+
+// runCtx 与 run 相同，但可以带上调用方的上下文：请求被取消时尽快收工。
+func (c *HSClient) runCtx(ctx context.Context, args ...string) (string, error) {
+	timeout := c.callTimeout()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if err := c.gate.acquire(ctx); err != nil {
+		return "", err
+	}
+	defer c.gate.release()
+
 	args = append(args, "-o", "json")
-	cmd := exec.Command(c.Bin, args...)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(errBuf.String(), "")))
+	out, errOut, err := c.execSplit(ctx, c.Bin, args...)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("%s 执行超时（超过 %s）", filepath.Base(c.Bin), timeout)
+		}
+		msg := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(errOut, "")))
 		if msg == "" {
 			msg = err.Error()
 		}
 		return "", errors.New(msg)
 	}
-	return strings.TrimSpace(safeText(ansiRE.ReplaceAllString(out.String(), ""))), nil
+	return strings.TrimSpace(safeText(ansiRE.ReplaceAllString(out, ""))), nil
 }
 
 func (c *HSClient) runJSON(args ...string) (any, error) {
@@ -179,16 +220,17 @@ func (c *HSClient) CreateAPIKey(expiration string) (string, error) {
 }
 
 func (c *HSClient) Version() string {
-	cmd := exec.Command(c.Bin, "version")
-	b, err := cmd.CombinedOutput()
+	// version 不查数据库，也不进闸门：它不该排在别的调用后面。
+	// 但仍然要有超时——headscale 卡住时不能让整页跟着卡。
+	b, err := execCombined(context.Background(), c.callTimeout(), c.Bin, "version")
 	if err != nil {
 		return "未知"
 	}
-	lines := strings.Fields(strings.TrimSpace(safeText(ansiRE.ReplaceAllString(string(b), ""))))
+	lines := strings.Fields(strings.TrimSpace(safeText(ansiRE.ReplaceAllString(b, ""))))
 	if len(lines) >= 3 {
 		return lines[2]
 	}
-	return strings.TrimSpace(string(b))
+	return strings.TrimSpace(b)
 }
 
 func str(v any) string {
@@ -382,7 +424,7 @@ func (c *HSClient) UpdateTop(key string, value string) error {
 }
 
 func (c *HSClient) chownConfig() error {
-	_ = exec.Command("chown", "headscale:headscale", c.Config).Run()
+	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "headscale:headscale", c.Config)
 	return nil
 }
 
@@ -489,9 +531,9 @@ func (c *HSClient) SavePolicyChecked(content string, lang ...string) error {
 	}
 	defer os.Remove(candidate)
 
-	out, err := exec.Command(c.Bin, "policy", "check", "-c", c.Config, "-f", candidate).CombinedOutput()
+	out, err := execCombined(context.Background(), hsWriteTimeout, c.Bin, "policy", "check", "-c", c.Config, "-f", candidate)
 	if err != nil {
-		msg := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(string(out), "")))
+		msg := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(out, "")))
 		return errors.New(tr(L, "hs.policyInvalid", msg))
 	}
 	if old, err := os.ReadFile(p); err == nil {
@@ -502,27 +544,27 @@ func (c *HSClient) SavePolicyChecked(content string, lang ...string) error {
 	}
 	// 策略文件得让 headscale 服务读得到：它以 headscale 用户运行，
 	// 管理界面以 root 写入，0600 的 root 文件它读不了。
-	_ = exec.Command("chown", "headscale:headscale", p).Run()
+	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "headscale:headscale", p)
 	return nil
 }
 
 func systemctl(args ...string) (string, error) {
-	cmd := exec.Command("systemctl", args...)
-	b, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(b)), err
+	b, err := execCombined(context.Background(), systemctlTimeout(args...), "systemctl", args...)
+	return strings.TrimSpace(b), err
 }
 
 func journal(n int) string {
-	cmd := exec.Command("journalctl", "-u", "headscale", "-n", strconv.Itoa(n), "--no-pager")
-	b, err := cmd.CombinedOutput()
+	b, err := execCombined(context.Background(), hsLocalTimeout, "journalctl", "-u", "headscale", "-n", strconv.Itoa(n), "--no-pager")
 	if err != nil {
-		return safeText(string(b))
+		return safeText(b)
 	}
-	return safeText(ansiRE.ReplaceAllString(string(b), ""))
+	return safeText(ansiRE.ReplaceAllString(b, ""))
 }
 
 func certExpiry() string {
-	cmd := exec.Command("sh", "-c", `set -e
+	// 这条命令会带出 openssl、find 这些孙进程：超时时要整组一起收，
+	// 否则它们会变成孤儿继续在 /var/lib/headscale/cache 里翻。
+	b, err := execCombined(context.Background(), hsLocalTimeout, "sh", "-c", `set -e
 conf=/etc/headscale/config.yaml
 p=$(grep -E '^tls_cert_path:' "$conf" 2>/dev/null | head -1 | sed -E 's/^tls_cert_path:[[:space:]]*//; s/^"|"$//g')
 if [ -z "$p" ] || [ ! -f "$p" ]; then
@@ -531,11 +573,10 @@ fi
 [ -n "$p" ] && [ -f "$p" ] || exit 0
 openssl x509 -in "$p" -noout -enddate | sed 's/^notAfter=//'
 `)
-	b, err := cmd.CombinedOutput()
 	if err != nil {
 		return "—"
 	}
-	s := strings.TrimSpace(string(b))
+	s := strings.TrimSpace(b)
 	if s == "" {
 		return "—"
 	}

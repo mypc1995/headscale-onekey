@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -145,7 +145,9 @@ func restartSelf() error {
 	}
 	go func() {
 		time.Sleep(time.Second)
-		_ = exec.Command("systemctl", "restart", unit).Run()
+		// 用独立上下文：重启是改系统状态的动作，不能因为发起它的那个
+		// HTTP 请求断开就被取消——那样服务会停在新旧之间。
+		_, _ = execCombined(context.Background(), hsWriteTimeout, "systemctl", "restart", unit)
 	}()
 	return nil
 }
