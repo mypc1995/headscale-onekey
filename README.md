@@ -7,12 +7,14 @@
   <img src="https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Platform: Linux">
   <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280?style=flat-square" alt="x86_64 and aarch64">
   <img src="https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="Shell: Bash">
+  <img src="https://img.shields.io/badge/SQLite-pure%20Go-6B7280?style=flat-square" alt="Pure Go SQLite">
+  <img src="https://img.shields.io/badge/dependencies-none-6B7280?style=flat-square" alt="No external dependencies">
   <img src="https://img.shields.io/badge/i18n-简体中文%20%7C%20English-8B5CF6?style=flat-square" alt="i18n">
 </p>
 
 <p align="center">
   <b>一条命令装好私有 Headscale，再配一个能管到底的网页控制台。</b><br>
-  <sub>自带管理界面 · 零外部依赖 · 中文/English · 14 套配色</sub>
+  <sub>自带管理界面 · 零外部依赖 · 中文 / English · 14 套配色</sub>
 </p>
 
 <p align="center">
@@ -48,8 +50,9 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 | 🧩 | **全量网页配置** — 域名、端口、网段、DNS、DERP、ACL、TLS 证书、证书续期全部图形化，保存前备份 + `configtest` |
 | 📈 | **实时监控** — 本机 CPU/内存/负载/运行时长 + 节点在线/握手/版本/到期/路由 + 每 3 秒网速曲线 + 7 条告警规则 |
 | 🌐 | **节点级网速** — 节点侧 agent 上报累计流量，服务端按差值换算速率（控制面本身没有这个计数器） |
-| 🛡️ | **安全基线** — PBKDF2 口令摘要、HttpOnly 会话、全表单 CSRF、登录限速、撤权即吊销会话 |
-| 🎨 | **双语与主题** — 中文/English 一键切换，14 套配色，选择保存在 Cookie / 浏览器本地 |
+| 🛡️ | **安全基线** — PBKDF2 口令摘要、HttpOnly 会话、全表单 CSRF、登录限速、撤权即吊销会话、**公网登录图形验证码**、**全站安全响应头与 CSP** |
+| ⚡ | **卡不死的控制面** — 外部命令全部带超时与可取消闸门，headscale 抽风时界面不会整体僵住 |
+| 🎨 | **双语与主题** — 中文 / English 一键切换，14 套配色，选择保存在 Cookie / 浏览器本地 |
 
 <details>
 <summary><b>目录</b></summary>
@@ -61,9 +64,15 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
   - [1. 部署 Headscale](#1-部署-headscale)
   - [2. 部署管理界面](#2-部署管理界面)
 - [管理界面](#管理界面)
+  - [页面一览](#页面一览)
   - [配置项](#配置项)
   - [网络与策略](#网络与策略)
   - [运维监控](#运维监控)
+- [安全设计](#安全设计)
+  - [登录安全](#登录安全)
+  - [传输与响应头](#传输与响应头)
+  - [共享出口与可信来源](#共享出口与可信来源)
+- [可靠性设计](#可靠性设计)
 - [节点网速上报](#节点网速上报)
 - [验证](#验证)
 - [安全提示](#安全提示)
@@ -82,7 +91,7 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 | `node-speed-agent.sh` | 节点侧网速采集代理，把本机 Tailscale 流量计数上报到管理界面 |
 | `remove-headcontrol.sh` | 从旧版本升级时清理 HeadControl（3000），释放端口 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
-| `test-headscale-admin.sh` | 管理界面编译、登录、双语、主题、网速、配置校验与 CSRF 验证 |
+| `test-headscale-admin.sh` | 管理界面编译、登录、验证码、双语、主题、网速、配置校验与 CSRF 验证 |
 | `test-headscale-admin-tls.sh` | 管理界面 HTTPS 全流程验证（隔离实例，不碰生产服务） |
 
 ## 快速开始
@@ -176,31 +185,31 @@ scp -r headscale-admin/templates headscale-admin/static 服务器:~/
 sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 ```
 
-**功能覆盖**
+## 管理界面
 
-| 页面 | 内容 |
-| --- | --- |
-| 总览 | 用户数、节点数、在线数、待审批路由数、密钥数、服务状态、证书到期 |
-| 节点 | 列表、重命名、过期、删除、标签、路由审批（只列出尚未批准的路由，批准后自动出队） |
-| 用户 | 创建、重命名、删除，支持显示名与邮箱 |
-| 密钥与接入 | 预授权密钥与 API key 的生成/失效/删除，客户端一键接入命令 |
-| 网络与策略 | DNS / MagicDNS、DERP、ACL 策略、完整配置编辑 |
-| 运维监控 | 本机资源、节点状态、实时网速、告警、服务状态、日志、重启 |
-| 管理员 | 增删改、角色（admin / readonly）、修改密码 |
-| 配置项 | 域名、端口与网段、HTTPS 证书、证书自动续期、管理界面自身 HTTPS |
+界面采用暖色底、粗边框、硬阴影的新粗野主义风格，图标全部内联，不依赖外部 CDN。顶部地球图标切换中英文（选择存 Cookie，登录页也能切），主题下拉提供 14 套配色——浅色、深色、赛博朋克、海洋、日落、森林、午夜、德古拉、北欧、玫瑰、咖啡、终端、柔和、合成波（选择存浏览器本地）。
+
+### 页面一览
+
+| 路径 | 页面 | 内容 |
+| --- | --- | --- |
+| `/` | 总览 | 用户数、节点数、在线数、待审批路由数、密钥数、服务状态、证书到期 |
+| `/nodes` | 节点 | 列表、重命名、过期、删除、标签、路由审批（只列出尚未批准的路由，批准后自动出队） |
+| `/users` | 用户 | 创建、重命名、删除，支持显示名与邮箱 |
+| `/keys` | 密钥与接入 | 预授权密钥与 API key 的生成 / 失效 / 删除，客户端一键接入命令 |
+| `/network` | 网络与策略 | DNS / MagicDNS、DERP、ACL 策略、完整配置编辑 |
+| `/ops` | 运维监控 | 本机资源、节点状态、实时网速、告警、服务状态、日志、重启 |
+| `/admins` | 管理员 | 增删改、角色（admin / readonly）、修改密码 |
+| `/settings` | 配置项 | 域名、端口与网段、HTTPS 证书、证书自动续期、管理界面自身 HTTPS |
 
 **密钥与接入**这一块的细节：
 
 - **有效期下拉**：1 小时、24 小时、7 天、30 天、90 天、1 年、长期（100 年，等效永不过期）。
-- **一键接入卡片**：`server_url` 自动读取当前配置（绑定 IP/域名并保存后即生效），新生成的预授权密钥自动填入 `key`，页面实时拼出 `tailscale up --login-server=<server_url> --authkey=<key>`，一键复制。地址或密钥未就绪时命令显示占位提示且复制按钮禁用，避免复制到半截命令。
+- **一键接入卡片**：`server_url` 自动读取当前配置（绑定 IP / 域名并保存后即生效），新生成的预授权密钥自动填入 `key`，页面实时拼出 `tailscale up --login-server=<server_url> --authkey=<key>`，一键复制。地址或密钥未就绪时命令显示占位提示且复制按钮禁用，避免复制到半截命令。
 - **打码显示**：密钥默认打码，点眼睛图标切换；列表中每条可单独复制，或「填入命令」直接用于接入卡片。新密钥只展示一次（按会话一次性暂存，刷新后不再带出），密钥不出现在 URL 与日志中。
-- **类型与备注**：列表带「类型」标识（一次性/可复用、已使用/未使用、已失效、临时节点徽章）和「备注」列。备注存在管理界面本地 SQLite（按密钥 ID 关联），删除密钥时一并清理。
+- **类型与备注**：列表带「类型」标识（一次性 / 可复用、已使用 / 未使用、已失效、临时节点徽章）和「备注」列。备注存在管理界面本地 SQLite（按密钥 ID 关联），删除密钥时一并清理。
 - **API key**：创建后在醒目卡片展示完整值并附复制按钮（仅显示一次，刷新即消失），列表中只显示前缀。
-- headscale 的 `preauthkeys list` 只返回打码密钥（`hskey-auth-xxxx-***`），打码条目不提供复制/填入命令，并标注「仅创建时可见完整值」。
-
-## 管理界面
-
-界面采用暖色底、粗边框、硬阴影的新粗野主义风格，图标全部内联，不依赖外部 CDN。顶部地球图标切换中英文（选择存 Cookie，登录页也能切），主题下拉提供 14 套配色——浅色、深色、赛博朋克、海洋、日落、森林、午夜、德古拉、北欧、玫瑰、咖啡、终端、柔和、合成波（选择存浏览器本地）。
+- headscale 的 `preauthkeys list` 只返回打码密钥（`hskey-auth-xxxx-***`），打码条目不提供复制 / 填入命令，并标注「仅创建时可见完整值」。
 
 ### 配置项
 
@@ -208,21 +217,21 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 
 **域名与访问地址**
 
-| 页面名称 | 配置键 | 校验规则 |
+| 配置键 | 页面名称 | 校验规则 |
 | --- | --- | --- |
-| 对外访问地址 | `server_url` | 必填；只允许 `http://` / `https://`；不能带路径、参数、锚点或结尾 `/`；协议必须与证书方式匹配 |
-| 设备域名后缀 | `dns.base_domain` | 必填；至少两级标签；不能是纯 IP；不能与 `server_url` 域名相同 |
-| 启用设备名互访（MagicDNS） | `dns.magic_dns` | 开关；勾选后设备可直接用设备名互访 |
+| `server_url` | 对外访问地址 | 必填；只允许 `http://` / `https://`；不能带路径、参数、锚点或结尾 `/`；协议必须与证书方式匹配 |
+| `dns.base_domain` | 设备域名后缀 | 必填；至少两级标签；不能是纯 IP；不能与 `server_url` 域名相同 |
+| `dns.magic_dns` | 启用设备名互访（MagicDNS） | 开关；勾选后设备可直接用设备名互访 |
 
 **端口与网段**
 
-| 页面名称 | 配置键 | 校验规则 |
+| 配置键 | 页面名称 | 校验规则 |
 | --- | --- | --- |
-| 客户端连接端口 | `listen_addr` | 必填；`IP:端口`，端口 1–65535 |
-| 本机管理端口 | `grpc_listen_addr` | 必填；格式同上 |
-| 监控数据端口 | `metrics_listen_addr` | 可留空；格式同上 |
-| 设备 IPv4 网段 | `prefixes.v4` | 必填；合法 CIDR（不限定在 `100.64.0.0/10` 内） |
-| 设备 IPv6 网段 | `prefixes.v6` | 勾选「启用 IPv6」后必填；合法 CIDR，掩码不能大于 /64 |
+| `listen_addr` | 客户端连接端口 | 必填；`IP:端口`，端口 1–65535 |
+| `grpc_listen_addr` | 本机管理端口 | 必填；格式同上 |
+| `metrics_listen_addr` | 监控数据端口 | 可留空；格式同上 |
+| `prefixes.v4` | 设备 IPv4 网段 | 必填；合法 CIDR（不限定在 `100.64.0.0/10` 内） |
+| `prefixes.v6` | 设备 IPv6 网段 | 勾选「启用 IPv6」后必填；合法 CIDR，掩码不能大于 /64 |
 
 同一表单内端口重复会被直接拦截。`server_url` 端口与监听端口不一致时给出警告，避免改端口时两边互相锁死。
 
@@ -237,7 +246,7 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 
 | 方式 | 做法 |
 | --- | --- |
-| 自动申请（Let's Encrypt） | 填证书域名（必填 FQDN）、到期通知邮箱（可选，填了必须合法）、验证方式（HTTP-01 / TLS-ALPN-01）、验证时临时监听地址、证书缓存目录 |
+| 自动申请（Let's Encrypt） | 填证书域名（必填 FQDN）、验证方式（HTTP-01 / TLS-ALPN-01）、验证时临时监听地址、证书缓存目录 |
 | 手动上传已有证书 | 上传三个文件：**公钥证书（叶子）**、**中间证书（可含多张）**、**私钥**。服务端先把文件内容归一化（去 BOM、CRLF 转 LF），把证书按签名关系排成完整链（CA 交付的 bundle 顺序颠倒也能用），再用 `tls.X509KeyPair` 校验证书与私钥配对、逐对验签确认链完整，全部通过才写入 `/etc/headscale/certs/manual.crt` 与 `manual.key`（0600，属主 `headscale`），再把路径写进 `tls_cert_path` / `tls_key_path` |
 | 不启用 HTTPS | 清空 ACME 域名与证书路径 |
 
@@ -248,7 +257,7 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 **证书自动更新**
 
 - **内置 ACME**：由 headscale 进程自动续期，不需要额外定时任务。
-- **certbot**：显示 `certbot.timer` 的启用与运行状态、上次/下次执行时间、证书名；可启停定时器、设置每日检查时间（写入 `certbot.timer.d/override.conf` 后 `daemon-reload`），也可立即续期（执行 `certbot renew` 后重启 headscale）。
+- **certbot**：显示 `certbot.timer` 的启用与运行状态、上次 / 下次执行时间、证书名；可启停定时器、设置每日检查时间（写入 `certbot.timer.d/override.conf` 后 `daemon-reload`），也可立即续期（执行 `certbot renew` 后重启 headscale）。
 - 未安装 certbot 时显示安装提示，不展示不可用的按钮。
 
 **管理界面 HTTPS**
@@ -272,13 +281,7 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 
 手动上传证书时，证书文件先落盘再写入配置；若后面的 `configtest` 或重启失败，证书文件会随配置一起还原成上一份。
 
-> 修改监听端口或 `server_url` 会短暂中断客户端连接；切换 HTTP/HTTPS 需要两侧配置配套修改，页面会在不一致时给出警告。
-
-**节点网速上报**
-
-这一块是只读的展示与分发区：显示上报接口地址、上报令牌与通道状态，地址和令牌各带一个复制按钮。令牌只对 admin 角色下发，只读账号看到的是「仅管理员可见」。运维页只保留一个通道状态徽标和指向本块的链接。
-
-上报地址里的主机名取自你访问管理界面时用的 Host：按 IP 直连时原样使用，用域名访问时只有该域名出现在 headscale 配置的 `server_url` 或 `dns.base_domain` 里才会被采用，否则退回 `127.0.0.1:<端口>`。这是为了防止伪造 Host 头把管理员骗去复制一个指向别处的地址。节点在 tailnet 内访问时，请把地址里的主机名换成服务器的 tailnet IP。
+> 修改监听端口或 `server_url` 会短暂中断客户端连接；切换 HTTP / HTTPS 需要两侧配置配套修改，页面会在不一致时给出警告。
 
 ### 网络与策略
 
@@ -297,13 +300,13 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 
 路径 `/ops`。
 
-**本机资源** — 每 3 秒读取 `/proc/stat`、`/proc/meminfo`、`/proc/loadavg`、`/proc/uptime`，展示 CPU 使用率、内存使用率（已用/总量）、系统负载（1/5/15 分钟）、运行时长和最近 3 分钟的 CPU/内存曲线。
+**本机资源** — 每 3 秒读取 `/proc/stat`、`/proc/meminfo`、`/proc/loadavg`、`/proc/uptime`，展示 CPU 使用率、内存使用率（已用 / 总量）、系统负载（1 / 5 / 15 分钟）、运行时长和最近 3 分钟的 CPU / 内存曲线。
 
 - CPU 使用率由两次采样的累计 tick 差值算出，首次采样显示 0。
 - 内存使用率按 `MemTotal - MemAvailable` 计算，老内核没有 `MemAvailable` 时退化为 `MemFree + Buffers + Cached`。
 - 非 Linux 环境没有 `/proc`，页面显示不可用提示，不影响其他功能。
 
-**节点监控** — 后台每 15 秒执行一次 `headscale nodes list -o json`，缓存结果并展示节点总数、在线、离线、密钥过期数量，以及每个节点的名称、所属用户、虚拟 IP、在线状态、实时速度（下行/上行）、最后握手时间、客户端版本、系统、密钥到期、标签与路由数量。状态分在线、离线、密钥过期三种，密钥过期优先显示。CLI 读取失败时保留上一次成功的数据，并在卡片顶部提示「显示的是上一次成功采集的结果」。表格底部标注数据更新时间与采样周期。
+**节点监控** — 后台每 15 秒执行一次 `headscale nodes list -o json`，缓存结果并展示节点总数、在线、离线、密钥过期数量，以及每个节点的名称、所属用户、虚拟 IP、在线状态、实时速度（下行 / 上行）、最后握手时间、客户端版本、系统、密钥到期、标签与路由数量。状态分在线、离线、密钥过期三种，密钥过期优先显示。CLI 读取失败时保留上一次成功的数据，并在卡片顶部提示「显示的是上一次成功采集的结果」。表格底部标注数据更新时间与采样周期。
 
 **节点实时速度** — 节点间流量走 WireGuard 直连或 DERP，不经过控制服务器，headscale 的 CLI 与 Prometheus 指标都没有按节点的流量计数器，因此网速数据源需要节点侧自己采集再回传。管理界面支持两条通道，**节点上报优先于计数器文件**：
 
@@ -325,7 +328,7 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 **接口** — `GET /api/monitor` 需要登录，返回 `host`、`nodes`、`alerts`、`thresholds` 四部分，页面每 5 秒轮询一次；节点数据复用服务端 15 秒缓存，多开页面不会频繁调用 CLI。
 
 <details>
-<summary><b>扩展方式</b></summary>
+<summary><b>扩展方式：新增一个监控指标 / 告警规则</b></summary>
 
 - **新增本机指标**：在 `hostmon.go` 的 `HostSnapshot` 加字段并在 `sample()` 里填充（例如读 `/proc/mounts` 统计磁盘占用），`newHostView` 补展示文案，前端加一个进度条。
 - **新增节点指标**：在 `nodemont.go` 的 `nodeStatFromMap` 里从 CLI JSON 取字段并加入 `NodeStat`，模板与 `static/app.js` 的 `nodeRow` 各加一列；需要差值换算的计数器类指标（如网速）仿照 `nodeSpeedRates` 增加数据源即可。
@@ -333,6 +336,62 @@ sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 - **接通知渠道**：`MonitorAlert` 的 `Key` 与 `Level` 已固定，可在规则求值后按 key 去重，再推送到邮件或 Webhook。
 
 </details>
+
+## 安全设计
+
+### 登录安全
+
+- 密码用 PBKDF2-HMAC-SHA256（12 万次迭代）加盐保存。
+- 会话使用 HttpOnly Cookie，所有表单带 CSRF token，只读角色无法提交修改。
+- **公网来源的登录页带图形验证码**：4 位数字 PNG，噪点 + 干扰线 + 逐位抖动。**校验排在口令校验之前**——验证码不对就不跑 PBKDF2，攻击者烧不掉 CPU。令牌存在服务端内存（TTL 5 分钟、**一次一用**、上限 1024 条），通过 HttpOnly Cookie `hsa_cap` 下发；图片不缓存，刷新即换一张。
+- **验证码豁免只有一条规则、代码内固定、无开关**：来源在 `HSA_LOGIN_TRUSTED_IPS` 里，或者「来源是回环地址 **且** Host 也是回环 / 本机名」。第二个条件缺一不可——同机反代转过来的公网请求 Host 是公网域名，**仍然要验证码**，否则一部署反代验证码就形同虚设。
+- 登录失败按「来源 IP + 账号名」与「来源 IP」两个维度分别计数：猜错多次后该来源对该账号的登录会逐渐变慢，同一 IP 失败过多会被临时锁定（默认 30 次触发、锁 2 分钟）；不存在的用户名同样要付出完整的密钥派生代价，避免被用来枚举账号。
+- 登录成功后只清「来源 IP + 账号名」这一条计数，不清来源 IP 的累计值——否则攻击者用自己那个合法账号登录一次就能把限速状态洗白。
+- 登录请求体上限 64 KB，超出直接返回 413；口令校验有并发闸门（CPU 核数减 2，最多 8 路），排队超时返回 429，避免几十个并发登录把机器 CPU 打满——这台机器同时还跑着 headscale 控制面。
+- 管理员把账号降为只读、停用、删除或改密后，该账号已登录的会话会**立即失效**，撤权当场生效；`--reset-admin` 重置口令同样会吊销该账号的既有会话。
+
+### 传输与响应头
+
+管理界面直接暴露在公网上，缺这些头的后果分别是：没有 `X-Frame-Options` 就能被点击劫持（别人把管理界面嵌进自己的页面诱导管理员点「保存」）；没有 CSP 就能让一次 XSS 把会话 Cookie 与 CSRF 令牌一起带走；没有 `nosniff` 浏览器可能把返回内容当成别的类型解析；没有 HSTS 首次走 HTTP 就可能被链路上的设备降级。
+
+| 响应头 | 值 | 作用 |
+| --- | --- | --- |
+| `X-Frame-Options` | `DENY` | 防点击劫持 |
+| `X-Content-Type-Options` | `nosniff` | 浏览器不猜内容类型 |
+| `Referrer-Policy` | `same-origin` | 不把管理界面地址带给外站 |
+| `Content-Security-Policy` | `default-src 'self'`；`script-src 'self'`；`style-src 'self' 'unsafe-inline'`；`img-src 'self' data:`；`font-src 'self'`；`connect-src 'self'`；`object-src 'none'`；`base-uri 'none'`；`form-action 'self'`；`frame-ancestors 'none'` | 一次 XSS 的破坏面被压到最小 |
+| `Strict-Transport-Security` | `max-age=31536000` | **只在直连 HTTPS 时加**（反代终止 TLS 的部署里服务端看不到 `r.TLS`，HSTS 要由反代自己加） |
+
+`script-src` **不放开** `'unsafe-inline'`：页面上不允许再有内联脚本，出现 XSS 就没有第二次机会（为此把主题初始化脚本挪成了独立的 `static/theme.js`）。`style-src` 放开 `'unsafe-inline'` 是因为进度条宽度、主题色块用的是行内 style 属性，那不是脚本。
+
+**静态资源带内容哈希版本号 + `Cache-Control: no-cache`**：Go 的 `http.FileServer` 只发 `Last-Modified`、不发 `Cache-Control`，浏览器会按「文件年龄的 10%」做启发式缓存——上线新版样式后老浏览器还能用十几小时的旧样式。两条措施互补，缺一不可：URL 带版本号解决「已经躺在缓存里的旧副本」，`no-cache` 解决「以后每次改动都要记得改版本号」。
+
+### 共享出口与可信来源
+
+登录限速按来源 IP 计数。NAT、公司统一出口或反向代理后面的所有人共用一个出口 IP，一次误触就会把所有人一起锁住。两个办法：
+
+```bash
+# 把运维网段列为可信来源：这些来源既不累计失败、不被锁定，也不需要验证码
+# 多个网段用逗号分隔，单个 IP 与 CIDR 都支持
+Environment="HSA_LOGIN_TRUSTED_IPS=192.168.1.0/24,10.8.0.5"
+```
+
+注意：**管理界面不解析 `X-Forwarded-For`**，认的是 TCP 连接的来源地址。放在反向代理后面时，所有请求的来源地址都是代理自己——此时千万不要把代理的 IP（尤其是 `127.0.0.1`）加进可信列表，否则等于对全世界关闭限速。
+
+管理员账号与会话都存放在 SQLite（`/var/lib/headscale-admin/headscale-admin.db`，权限 0600），服务重启后登录状态仍然保留。首次启动时如果检测到旧版 `admins.json`，会自动迁移并把原文件改名为 `admins.json.migrated`，原密码继续可用。SQLite 驱动为纯 Go 实现（`modernc.org/sqlite`），编译不需要 gcc 或 CGO。
+
+源码目录为 `headscale-admin/`，不依赖任何未声明许可证的第三方项目。
+
+## 可靠性设计
+
+管理界面通过命令行驱动 headscale。这条链路最容易出的问题是「headscale 某次调用卡住 → 整个界面僵住」，所以：
+
+- **每次外部命令都有超时**，并且超时后杀掉整个进程组（`sh -c` 底下还有 openssl / find 这些孙进程，只杀直接子进程会留孤儿、文件一直锁着）。
+- **所有调用排在一把可取消的闸门后面**：拿不到闸门就明确返回「headscale 忙」，而不是无限期等待。等闸门与执行共用同一个超时预算，避免「等锁等掉了超时、命令刚起来就被掐」。
+- **stdout 与 stderr 分开**：headscale 的 JSON 走 stdout、提示走 stderr，合并两者会把提示混进 JSON 里导致解析失败。
+- **改系统状态的动作不继承请求上下文**（`systemctl restart` 用独立 context）——否则发起它的 HTTP 请求一断，重启被取消，服务会停在新旧之间。
+- **总览页不再反复起进程**：版本号缓存 10 分钟、证书到期缓存 5 分钟、列表结果缓存 5 秒，服务状态直接复用节点监控快照。缓存**只给只读的总览页用**——节点页、用户页、密钥页仍然读最新数据，改名删除之后立刻可见。缓存**只存成功结果**，一次偶发失败不会被缓存住。
+- 超时档位可用 `HSA_HS_CALL_TIMEOUT`（秒）调短，给测试环境用。
 
 ## 节点网速上报
 
@@ -379,7 +438,7 @@ bash node-speed-agent.sh
 }
 ```
 
-> 节点侧能采集到的只有控制面指标。Tailscale 客户端不会把 CPU、内存等主机资源上报给 headscale，因此各节点的 CPU/内存不在这个页面的能力范围内；确需采集应在节点上部署 agent，把数据推到新增接口，按上面的扩展方式接入。
+> 节点侧能采集到的只有控制面指标。Tailscale 客户端不会把 CPU、内存等主机资源上报给 headscale，因此各节点的 CPU / 内存不在这个页面的能力范围内；确需采集应在节点上部署 agent，把数据推到新增接口，按上面的扩展方式接入。
 
 ## 验证
 
@@ -387,12 +446,12 @@ bash node-speed-agent.sh
 
 ```bash
 bash test-headscale-cli.sh      # CLI 命令、配置键与 configtest
-bash test-headscale-admin.sh    # 管理界面编译、登录、双语、主题、网速、本机与节点监控、
+bash test-headscale-admin.sh    # 管理界面编译、登录、验证码、双语、主题、网速、本机与节点监控、
                                 # 配置校验、IPv6 开关（含配置文件落盘校验）、网络表单、
                                 # CSRF、登录限速、只读账号与撤权生效（需 go/curl）
 (cd headscale-admin && go test ./...)
                                 # 配置解析、管理界面 HTTPS 证书、节点映射、双语展示、
-                                # 告警规则与账号权限单元测试
+                                # 告警规则、账号权限、TTL 缓存与安全响应头单元测试
 ```
 
 管理界面 HTTPS 的端到端验证需要一台可写 `/etc/systemd/system` 的 Linux 机器（要起独立的 systemd 单元），**不会碰生产服务**：
@@ -414,31 +473,6 @@ bash test-headscale-admin-tls.sh /usr/local/bin/headscale-admin
 | 两套 HTTPS | 管理界面 HTTPS 与 headscale 服务的 HTTPS 是两套独立配置，可分别启用。启用管理界面 HTTPS 后该端口只接受 HTTPS，请求 `http://` 不会跳转；证书异常导致无法访问时，删除数据目录的 `admin-tls.json` 并重启服务即可恢复 HTTP |
 | 明文告警 | HTTP 模式为明文，较新的 Tailscale 客户端可能需要设置 `TS_ALLOW_HTTP_CONTROL_SERVER=1` |
 | 域名与端口 | HTTPS 模式需要域名正确解析到本机，并确保 80（证书验证）和 443（服务）端口可达；启用内置 DERP 时需放行 UDP/3478 |
-
-### 认证与会话
-
-- 密码用 PBKDF2-HMAC-SHA256（12 万次迭代）加盐保存。
-- 会话使用 HttpOnly Cookie，所有表单带 CSRF token，只读角色无法提交修改。
-- 登录失败按「来源 IP + 账号名」与「来源 IP」两个维度分别计数：猜错多次后该来源对该账号的登录会逐渐变慢，同一 IP 失败过多会被临时锁定（默认 30 次触发、锁 2 分钟）；不存在的用户名同样要付出完整的密钥派生代价，避免被用来枚举账号。
-- 登录成功后只清「来源 IP + 账号名」这一条计数，不清来源 IP 的累计值——否则攻击者用自己那个合法账号登录一次就能把限速状态洗白。
-- 登录请求体上限 64 KB，超出直接返回 413；口令校验有并发闸门（CPU 核数减 2，最多 8 路），排队超时返回 429，避免几十个并发登录把机器 CPU 打满——这台机器同时还跑着 headscale 控制面。
-- 管理员把账号降为只读、停用、删除或改密后，该账号已登录的会话会**立即失效**，撤权当场生效；`--reset-admin` 重置口令同样会吊销该账号的既有会话。
-
-### 共享出口与可信来源
-
-登录限速按来源 IP 计数。NAT、公司统一出口或反向代理后面的所有人共用一个出口 IP，一次误触就会把所有人一起锁住。两个办法：
-
-```bash
-# 把运维网段列为可信来源：这些来源既不累计失败也不被锁定
-# 多个网段用逗号分隔，单个 IP 与 CIDR 都支持
-Environment="HSA_LOGIN_TRUSTED_IPS=192.168.1.0/24,10.8.0.5"
-```
-
-注意：**管理界面不解析 `X-Forwarded-For`**，认的是 TCP 连接的来源地址。放在反向代理后面时，所有请求的来源地址都是代理自己——此时千万不要把代理的 IP（尤其是 `127.0.0.1`）加进可信列表，否则等于对全世界关闭限速。
-
-管理员账号与会话都存放在 SQLite（`/var/lib/headscale-admin/headscale-admin.db`，权限 0600），服务重启后登录状态仍然保留。首次启动时如果检测到旧版 `admins.json`，会自动迁移并把原文件改名为 `admins.json.migrated`，原密码继续可用。SQLite 驱动为纯 Go 实现（`modernc.org/sqlite`），编译不需要 gcc 或 CGO。
-
-源码目录为 `headscale-admin/`，不依赖任何未声明许可证的第三方项目。
 
 ## 从旧版本升级
 
