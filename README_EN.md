@@ -1,15 +1,15 @@
 # headscale-onekey
 
 <p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square" alt="License: MIT">
-  <img src="https://img.shields.io/badge/Headscale-v0.29.7-4B5563?style=flat-square" alt="Headscale v0.29.7">
-  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.26">
-  <img src="https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Platform: Linux">
-  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280?style=flat-square" alt="x86_64 and aarch64">
-  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="Shell: Bash">
-  <img src="https://img.shields.io/badge/SQLite-pure%20Go-6B7280?style=flat-square" alt="Pure Go SQLite">
-  <img src="https://img.shields.io/badge/dependencies-none-6B7280?style=flat-square" alt="No external dependencies">
-  <img src="https://img.shields.io/badge/i18n-简体中文%20%7C%20English-8B5CF6?style=flat-square" alt="i18n">
+  <img src="https://img.shields.io/badge/License-MIT-2ea44f.png?style=flat-square" alt="License: MIT">
+  <img src="https://img.shields.io/badge/Headscale-v0.29.7-4B5563.png?style=flat-square" alt="Headscale v0.29.7">
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8.png?style=flat-square&logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Platform-Linux-FCC624.png?style=flat-square&logo=linux&logoColor=black" alt="Platform: Linux">
+  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280.png?style=flat-square" alt="x86_64 and aarch64">
+  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25.png?style=flat-square&logo=gnubash&logoColor=white" alt="Shell: Bash">
+  <img src="https://img.shields.io/badge/SQLite-pure%20Go-6B7280.png?style=flat-square" alt="Pure Go SQLite">
+  <img src="https://img.shields.io/badge/dependencies-none-6B7280.png?style=flat-square" alt="No external dependencies">
+  <img src="https://img.shields.io/badge/i18n-简体中文%20%7C%20English-8B5CF6.png?style=flat-square" alt="i18n">
 </p>
 
 <p align="center">
@@ -76,7 +76,6 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. admin UI
 - [Node speed reporting](#node-speed-reporting)
 - [Verification](#verification)
 - [Security notes](#security-notes)
-- [Upgrading from older versions](#upgrading-from-older-versions)
 - [License](#license)
 
 </details>
@@ -89,7 +88,6 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. admin UI
 | `deploy-headscale-admin.sh` | One-click deployment of the admin UI (port 3001 by default) |
 | `headscale-admin/` | Go source, templates, and static assets of the admin UI |
 | `node-speed-agent.sh` | Node-side collector that reports local Tailscale traffic counters to the admin UI |
-| `remove-headcontrol.sh` | Cleans up HeadControl (port 3000) when upgrading from older versions |
 | `test-headscale-cli.sh` | Read-only sandbox checks for the Headscale CLI and config keys |
 | `test-headscale-admin.sh` | Admin UI checks: build, login, captcha, i18n, themes, bandwidth, config validation and CSRF |
 | `test-headscale-admin-tls.sh` | End-to-end admin UI HTTPS checks on an isolated instance (never touches production) |
@@ -484,17 +482,6 @@ bash test-headscale-admin-tls.sh /usr/local/bin/headscale-admin
 | Two independent HTTPS setups | The admin UI's HTTPS and the headscale service's HTTPS are separate configurations that can be enabled independently. Once the admin UI's HTTPS is on, that port only accepts HTTPS and `http://` requests are not redirected; if a certificate problem makes the page unreachable, delete `admin-tls.json` from the data directory and restart the service to return to HTTP |
 | Plaintext warning | In HTTP mode the traffic is plaintext; newer Tailscale clients may need `TS_ALLOW_HTTP_CONTROL_SERVER=1` |
 | Domain and ports | HTTPS mode needs the domain to resolve to the host and ports 80 (certificate validation) and 443 (service) to be reachable; the built-in DERP additionally needs UDP/3478 |
-
-## Upgrading from older versions
-
-Older versions also deployed the community project HeadControl (port 3000). Headscale Admin now covers all of that, so there is no need to keep two consoles:
-
-```bash
-sudo bash remove-headcontrol.sh                # stop the service, remove program/data, free 3000, clean firewall rules
-sudo bash remove-headcontrol.sh --keep-data    # keep /var/lib/headcontrol
-```
-
-The script only cleans up HeadControl and **never touches Headscale, Headscale Admin or `/etc/headscale/config.yaml`**. Older versions remain available in the git history.
 
 ## License
 

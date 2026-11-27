@@ -1,15 +1,15 @@
 # headscale-onekey
 
 <p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square" alt="License: MIT">
-  <img src="https://img.shields.io/badge/Headscale-v0.29.7-4B5563?style=flat-square" alt="Headscale v0.29.7">
-  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.26">
-  <img src="https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Platform: Linux">
-  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280?style=flat-square" alt="x86_64 and aarch64">
-  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="Shell: Bash">
-  <img src="https://img.shields.io/badge/SQLite-pure%20Go-6B7280?style=flat-square" alt="Pure Go SQLite">
-  <img src="https://img.shields.io/badge/dependencies-none-6B7280?style=flat-square" alt="No external dependencies">
-  <img src="https://img.shields.io/badge/i18n-简体中文%20%7C%20English-8B5CF6?style=flat-square" alt="i18n">
+  <img src="https://img.shields.io/badge/License-MIT-2ea44f.png?style=flat-square" alt="License: MIT">
+  <img src="https://img.shields.io/badge/Headscale-v0.29.7-4B5563.png?style=flat-square" alt="Headscale v0.29.7">
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8.png?style=flat-square&logo=go&logoColor=white" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/Platform-Linux-FCC624.png?style=flat-square&logo=linux&logoColor=black" alt="Platform: Linux">
+  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280.png?style=flat-square" alt="x86_64 and aarch64">
+  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25.png?style=flat-square&logo=gnubash&logoColor=white" alt="Shell: Bash">
+  <img src="https://img.shields.io/badge/SQLite-pure%20Go-6B7280.png?style=flat-square" alt="Pure Go SQLite">
+  <img src="https://img.shields.io/badge/dependencies-none-6B7280.png?style=flat-square" alt="No external dependencies">
+  <img src="https://img.shields.io/badge/i18n-简体中文%20%7C%20English-8B5CF6.png?style=flat-square" alt="i18n">
 </p>
 
 <p align="center">
@@ -76,7 +76,6 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 - [节点网速上报](#节点网速上报)
 - [验证](#验证)
 - [安全提示](#安全提示)
-- [从旧版本升级](#从旧版本升级)
 - [许可证](#许可证)
 
 </details>
@@ -89,7 +88,6 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 | `deploy-headscale-admin.sh` | 管理界面一键部署（默认端口 3001） |
 | `headscale-admin/` | 管理界面 Go 源码、模板与静态资源 |
 | `node-speed-agent.sh` | 节点侧网速采集代理，把本机 Tailscale 流量计数上报到管理界面 |
-| `remove-headcontrol.sh` | 从旧版本升级时清理 HeadControl（3000），释放端口 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
 | `test-headscale-admin.sh` | 管理界面编译、登录、验证码、双语、主题、网速、配置校验与 CSRF 验证 |
 | `test-headscale-admin-tls.sh` | 管理界面 HTTPS 全流程验证（隔离实例，不碰生产服务） |
@@ -473,17 +471,6 @@ bash test-headscale-admin-tls.sh /usr/local/bin/headscale-admin
 | 两套 HTTPS | 管理界面 HTTPS 与 headscale 服务的 HTTPS 是两套独立配置，可分别启用。启用管理界面 HTTPS 后该端口只接受 HTTPS，请求 `http://` 不会跳转；证书异常导致无法访问时，删除数据目录的 `admin-tls.json` 并重启服务即可恢复 HTTP |
 | 明文告警 | HTTP 模式为明文，较新的 Tailscale 客户端可能需要设置 `TS_ALLOW_HTTP_CONTROL_SERVER=1` |
 | 域名与端口 | HTTPS 模式需要域名正确解析到本机，并确保 80（证书验证）和 443（服务）端口可达；启用内置 DERP 时需放行 UDP/3478 |
-
-## 从旧版本升级
-
-早期版本额外部署过社区项目 HeadControl（3000 端口）。现在管理功能已全部由 Headscale Admin 覆盖，不需要再保留两套界面：
-
-```bash
-sudo bash remove-headcontrol.sh                # 停服务、删程序/数据、放开 3000、清理防火墙规则
-sudo bash remove-headcontrol.sh --keep-data    # 保留 /var/lib/headcontrol
-```
-
-脚本只清理 HeadControl，**不动 Headscale、Headscale Admin 与 `/etc/headscale/config.yaml`**。历史版本仍可在 git 提交记录中找回。
 
 ## 许可证
 
