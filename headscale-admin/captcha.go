@@ -206,14 +206,6 @@ func captchaPNG(code string) []byte {
 		}
 	}
 
-	// 调色板：深色系，避免和浅背景混在一起
-	palette := []color.RGBA{
-		{0x1f, 0x3a, 0x8a, 0xff},
-		{0x7a, 0x1f, 0x5c, 0xff},
-		{0x0f, 0x60, 0x3a, 0xff},
-		{0x8a, 0x2b, 0x1f, 0xff},
-		{0x24, 0x24, 0x33, 0xff},
-	}
 	cell := captchaScale * 5
 	gap := 6
 	total := len(code)*cell + (len(code)-1)*gap
@@ -226,7 +218,7 @@ func captchaPNG(code string) []byte {
 			continue
 		}
 		glyph := captchaFont[d]
-		c := palette[randInt(len(palette))]
+		c := captchaPalette[randInt(len(captchaPalette))]
 		// 每个数字独立的横向与纵向抖动，避免固定位置被模板匹配。
 		// 横向抖动幅度收窄到 ±1px，免得最左边的数字贴到画布边缘。
 		dx := randInt(3) - 1
@@ -255,6 +247,19 @@ func captchaPNG(code string) []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()
+}
+
+// captchaPalette 是画数字用的调色板：深色系，避免和浅背景混在一起。
+//
+// 提为包级变量：测试要靠它判断「数字到底画上去了没有」。
+// 噪点是中性灰、干扰线是随机 RGB，都不会命中这里列的颜色，
+// 所以「命中调色板的像素数」只反映数字本身画了多少。
+var captchaPalette = []color.RGBA{
+	{0x1f, 0x3a, 0x8a, 0xff},
+	{0x7a, 0x1f, 0x5c, 0xff},
+	{0x0f, 0x60, 0x3a, 0xff},
+	{0x8a, 0x2b, 0x1f, 0xff},
+	{0x24, 0x24, 0x33, 0xff},
 }
 
 // captchaFont 是 5x7 点阵字模（数字 0-9）。

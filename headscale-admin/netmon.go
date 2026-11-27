@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bufio"
-	"os"
-	"strconv"
-	"strings"
+	"sort"
 	"sync"
 	"time"
 )
@@ -35,7 +32,10 @@ type NetSnapshot struct {
 
 type netCounter struct{ rx, tx uint64 }
 
-// NetMonitor 每 2 秒采样一次 /proc/net/dev，计算实时速率并保留最近 60 个点。
+// NetMonitor 每 2 秒采样一次各网卡的累计计数，计算实时速率并保留最近 60 个点。
+//
+// 计数来源按平台拆开：Linux 读 /proc/net/dev（netmon_linux.go），
+// Windows 走 iphlpapi（netmon_windows.go）；本文件只管结构与速率计算。
 type NetMonitor struct {
 	mu       sync.RWMutex
 	last     map[string]netCounter
@@ -58,39 +58,18 @@ func NewNetMonitor() *NetMonitor {
 }
 
 func (m *NetMonitor) sample() {
-	f, err := os.Open("/proc/net/dev")
+	cur, err := readNetCounters()
 	if err != nil {
 		m.mu.Lock()
 		m.snap = NetSnapshot{Available: false, Ifaces: []NetIface{}, History: []NetPoint{}}
 		m.mu.Unlock()
 		return
 	}
-	defer f.Close()
 
 	now := time.Now()
-	cur := map[string]netCounter{}
 	snap := NetSnapshot{Available: true, Ifaces: []NetIface{}, Updated: now.Format("15:04:05")}
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		i := strings.Index(line, ":")
-		if i < 0 {
-			continue
-		}
-		name := strings.TrimSpace(line[:i])
-		if name == "" || name == "lo" {
-			continue
-		}
-		fields := strings.Fields(line[i+1:])
-		if len(fields) < 9 {
-			continue
-		}
-		rx, e1 := strconv.ParseUint(fields[0], 10, 64)
-		tx, e2 := strconv.ParseUint(fields[8], 10, 64)
-		if e1 != nil || e2 != nil {
-			continue
-		}
-		cur[name] = netCounter{rx, tx}
+	for name, c := range cur {
+		rx, tx := c.rx, c.tx
 		var rateRx, rateTx float64
 		if prev, ok := m.last[name]; ok && !m.lastTime.IsZero() {
 			if sec := now.Sub(m.lastTime).Seconds(); sec > 0 {
@@ -108,6 +87,8 @@ func (m *NetMonitor) sample() {
 		snap.TotalRxBytes += rx
 		snap.TotalTxBytes += tx
 	}
+	// 计数来自 map，顺序是随机的：按名字排一遍，界面上的网卡顺序才稳定。
+	sort.Slice(snap.Ifaces, func(i, j int) bool { return snap.Ifaces[i].Name < snap.Ifaces[j].Name })
 
 	m.mu.Lock()
 	if !m.lastTime.IsZero() && len(m.last) > 0 {

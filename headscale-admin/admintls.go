@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // adminTLSConfig 是管理界面自身的 HTTPS 配置，存在数据目录下的 admin-tls.json。
@@ -131,23 +129,18 @@ func sessionCookieSecure(forceSecure, tlsOn bool) bool {
 }
 
 // restartSelf 延迟重启管理界面进程（systemd 会自动拉起，加载新 HTTPS 配置）。
-// 延迟 1 秒让当前响应先发出；非 systemd 环境直接返回错误由界面提示手动重启。
+// 延迟 1 秒让当前响应先发出；没有守护进程的环境直接返回错误，由界面提示手动重启。
 //
-// 重启的单元名可用 HSA_SYSTEMD_UNIT 覆盖，默认 headscale-admin。
-// 隔离实例用另一个单元名，才能在不碰生产服务的前提下测这条自重启链路。
+// 服务名可用 HSA_SERVICE_UNIT 覆盖，默认 headscale-admin。
+// 隔离实例用另一个名字，才能在不碰生产服务的前提下测这条自重启链路。
+// （HSA_SYSTEMD_UNIT 是 Linux 侧的旧名，一并认，配置不用改。）
 func restartSelf() error {
-	if os.Getenv("INVOCATION_ID") == "" {
-		return errors.New("not running under systemd")
+	unit := strings.TrimSpace(os.Getenv("HSA_SERVICE_UNIT"))
+	if unit == "" {
+		unit = strings.TrimSpace(os.Getenv("HSA_SYSTEMD_UNIT"))
 	}
-	unit := os.Getenv("HSA_SYSTEMD_UNIT")
 	if unit == "" {
 		unit = "headscale-admin"
 	}
-	go func() {
-		time.Sleep(time.Second)
-		// 用独立上下文：重启是改系统状态的动作，不能因为发起它的那个
-		// HTTP 请求断开就被取消——那样服务会停在新旧之间。
-		_, _ = execCombined(context.Background(), hsWriteTimeout, "systemctl", "restart", unit)
-	}()
-	return nil
+	return svcSelfRestart(unit)
 }

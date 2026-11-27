@@ -14,7 +14,7 @@
     <div class="kv-row"><span>{{t .Lang "field.service"}}</span><b>{{if eq .Data.Service "active"}}<span class="badge success"><span class="dot"></span>{{t .Lang "state.active"}}</span>{{else}}<span class="badge danger">{{.Data.Service}}</span>{{end}}</b></div>
     <div class="kv-row"><span>{{t .Lang "field.version"}}</span><b>{{.Data.Version}}</b></div>
     <div class="kv-row"><span>{{t .Lang "field.cert"}}</span><b>{{.Data.Cert}}</b></div>
-    <div class="kv-row"><span>{{t .Lang "field.configFile"}}</span><b><code>/etc/headscale/config.yaml</code></b></div>
+    <div class="kv-row"><span>{{t .Lang "field.configFile"}}</span><b><code>{{.Data.ConfigPath}}</code></b></div>
   </div>
 </section>
 

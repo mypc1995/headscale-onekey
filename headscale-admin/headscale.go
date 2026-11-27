@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,14 +52,8 @@ type HSClient struct {
 }
 
 func NewHSClient() *HSClient {
-	bin := os.Getenv("HSA_HEADSCALE_BIN")
-	if bin == "" {
-		bin = "/usr/bin/headscale"
-	}
-	conf := os.Getenv("HSA_CONFIG_FILE")
-	if conf == "" {
-		conf = "/etc/headscale/config.yaml"
-	}
+	bin := defaultHeadscaleBin()
+	conf := defaultHeadscaleConfig()
 	return &HSClient{Bin: bin, Config: conf}
 }
 
@@ -112,6 +109,15 @@ func (c *HSClient) runCtx(ctx context.Context, args ...string) (string, error) {
 	defer c.gate.release()
 
 	args = append(args, "-o", "json")
+	// 显式带上配置文件路径。
+	//
+	// headscale 找不到 -c 时会按 /etc/headscale → ~/.headscale → 当前目录 去猜，
+	// 那套路径在 Windows 上根本不存在，CLI 直接读不到配置报错；
+	// 就算碰巧存在，也可能读到跟界面上编辑的不是同一份文件。
+	// 带上 -c 之后，「界面里编辑的配置」和「CLI 实际读的配置」永远是同一个。
+	if c.Config != "" {
+		args = append(args, "-c", c.Config)
+	}
 	out, errOut, err := c.execSplit(ctx, c.Bin, args...)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -262,12 +268,13 @@ func (c *HSClient) version() string {
 
 // CertExpiry 返回证书到期时间，带 5 分钟缓存。
 //
-// 它要起一个 sh 去跑 openssl，代价不低；而证书一个月才换一次。
+// 解析过程是纯 Go 的（读配置 → 读证书 → crypto/x509），
+// 不起外部进程；证书一个月才换一次，缓存 5 分钟足够。
 func (c *HSClient) CertExpiry() string {
 	if v, ok := c.certCache.get(hsCertTTL); ok {
 		return v
 	}
-	v := certExpiry()
+	v := certExpiry(c.Config)
 	c.certCache.set(v)
 	return v
 }
@@ -517,7 +524,7 @@ func (c *HSClient) UpdateTop(key string, value string) error {
 }
 
 func (c *HSClient) chownConfig() error {
-	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "headscale:headscale", c.Config)
+	chownFile(c.Config)
 	return nil
 }
 
@@ -559,12 +566,22 @@ func (c *HSClient) UpdateDERP(key string, value string, lang ...string) error {
 	return c.chownConfig()
 }
 
+// PolicyPath 返回 ACL 策略文件的路径。
+//
+// 相对路径按「配置文件所在目录」解析——和 headscale 自己
+// （util.AbsolutePathFromConfigPath）的规则保持一致。
+// 不跟着解析的话，同一个相对路径会落到两个地方：
+// headscale 认配置目录，管理界面认当前工作目录，两边写的不是同一份文件。
 func (c *HSClient) PolicyPath(lang ...string) string {
 	b, err := c.configBytes()
 	if err != nil {
 		return ""
 	}
-	return nestedValue(string(b), "policy", "path")
+	p := nestedValue(string(b), "policy", "path")
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(filepath.Dir(c.Config), p)
 }
 
 func (c *HSClient) Policy(lang ...string) (string, error) {
@@ -637,43 +654,87 @@ func (c *HSClient) SavePolicyChecked(content string, lang ...string) error {
 	}
 	// 策略文件得让 headscale 服务读得到：它以 headscale 用户运行，
 	// 管理界面以 root 写入，0600 的 root 文件它读不了。
-	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "headscale:headscale", p)
+	chownFile(p)
 	return nil
 }
 
-func systemctl(args ...string) (string, error) {
-	b, err := execCombined(context.Background(), systemctlTimeout(args...), "systemctl", args...)
-	return strings.TrimSpace(b), err
-}
-
-func journal(n int) string {
-	b, err := execCombined(context.Background(), hsLocalTimeout, "journalctl", "-u", "headscale", "-n", strconv.Itoa(n), "--no-pager")
+// serviceLog 取 headscale 服务最近的日志。
+//
+// Linux 走 journalctl，Windows 读部署脚本重定向出来的 .log 文件，
+// 两边都返回给人看的文本；出错时把已经拿到的内容带出来，不吞掉。
+func serviceLog(n int) string {
+	b, err := svcLogs(hsServiceName, n)
 	if err != nil {
 		return safeText(b)
 	}
 	return safeText(ansiRE.ReplaceAllString(b, ""))
 }
 
-func certExpiry() string {
-	// 这条命令会带出 openssl、find 这些孙进程：超时时要整组一起收，
-	// 否则它们会变成孤儿继续在 /var/lib/headscale/cache 里翻。
-	b, err := execCombined(context.Background(), hsLocalTimeout, "sh", "-c", `set -e
-conf=/etc/headscale/config.yaml
-p=$(grep -E '^tls_cert_path:' "$conf" 2>/dev/null | head -1 | sed -E 's/^tls_cert_path:[[:space:]]*//; s/^"|"$//g')
-if [ -z "$p" ] || [ ! -f "$p" ]; then
-  p=$(find /var/lib/headscale/cache -type f \( -name '*.crt' -o -name '*.pem' \) 2>/dev/null | head -1)
-fi
-[ -n "$p" ] && [ -f "$p" ] || exit 0
-openssl x509 -in "$p" -noout -enddate | sed 's/^notAfter=//'
-`)
+// certExpiry 返回证书到期时间，格式与 openssl 的 enddate 一致
+// （"Jun  7 12:00:00 2026 GMT"），界面上看不出差别。
+//
+// 原来是 `sh -c` 里拼 grep + find + openssl 三段 shell：只能在 Linux 上跑
+// （Windows 没有 sh 也没有 openssl），而且一次要起三四个进程。
+// 现在改成纯 Go：读配置拿 tls_cert_path → 读证书 → crypto/x509 解析 NotAfter。
+func certExpiry(confPath string) string {
+	p := ""
+	if b, err := os.ReadFile(confPath); err == nil {
+		p = topValue(string(b), "tls_cert_path")
+	}
+	if p == "" || !fileExists(p) {
+		p = findCertFile(defaultLECacheDir())
+	}
+	if p == "" {
+		return "—"
+	}
+	notAfter, err := certNotAfter(p)
 	if err != nil {
 		return "—"
 	}
-	s := strings.TrimSpace(b)
-	if s == "" {
-		return "—"
+	return notAfter
+}
+
+// findCertFile 在证书缓存目录里找第一张证书。
+//
+// 原来的 find 是递归的；缓存目录只有一层，用浅层遍历足够，
+// 也避免为了一个展示字段把整个目录树走一遍。
+func findCertFile(dir string) string {
+	var found string
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != dir && strings.Count(strings.TrimPrefix(path, dir), string(filepath.Separator)) >= 1 {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".crt" || ext == ".pem" {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// certNotAfter 解析 PEM 证书的到期时间。
+func certNotAfter(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
 	}
-	return s
+	block, _ := pem.Decode(b)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", errors.New("不是 PEM 证书")
+	}
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	return c.NotAfter.UTC().Format("Jan _2 15:04:05 2006") + " GMT", nil
 }
 
 func sortedKeys(m map[string]any) []string {

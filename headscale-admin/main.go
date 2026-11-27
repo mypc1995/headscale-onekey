@@ -58,10 +58,10 @@ type Page struct {
 
 func main() {
 	port := flag.String("port", envDefault("HSA_PORT", "3001"), "监听端口")
-	dbFile := flag.String("data", envDefault("HSA_DATA_FILE", "/var/lib/headscale-admin/headscale-admin.db"), "SQLite 数据库路径")
-	legacyJSON := flag.String("legacy-json", envDefault("HSA_LEGACY_JSON", "/var/lib/headscale-admin/admins.json"), "旧版管理员 JSON，首次启动时自动迁移")
-	tplDir := flag.String("templates", envDefault("HSA_TEMPLATES", "/opt/headscale-admin/templates"), "模板目录")
-	staticDir := flag.String("static", envDefault("HSA_STATIC", "/opt/headscale-admin/static"), "静态资源目录")
+	dbFile := flag.String("data", defaultDataFile(), "SQLite 数据库路径")
+	legacyJSON := flag.String("legacy-json", defaultLegacyJSON(), "旧版管理员 JSON，首次启动时自动迁移")
+	tplDir := flag.String("templates", defaultTemplatesDir(), "模板目录")
+	staticDir := flag.String("static", defaultStaticDir(), "静态资源目录")
 	// 初始/重置管理员的口令优先从环境变量读：命令行参数会出现在
 	// /proc/<pid>/cmdline 里，同机的任何用户都能看到；环境变量只有
 	// 同用户（以及 root）能读。命令行参数仍然保留，方便手工调试。
@@ -704,11 +704,12 @@ func clientIP(r *http.Request) string {
 type dashboardData struct {
 	Users, Nodes, Online, PendingRoutes, PreauthKeys, APIKeys int
 	Service, Version, Cert                                    string
+	ConfigPath                                                string
 	Recent                                                    []map[string]any
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
-	d := dashboardData{Service: "未知", Version: a.hs.Version(), Cert: a.hs.CertExpiry()}
+	d := dashboardData{Service: "未知", Version: a.hs.Version(), Cert: a.hs.CertExpiry(), ConfigPath: a.hs.Config}
 	// 服务状态直接用监控快照里的：监控本来就在每 15 秒查一次 systemctl，
 	// 这里没必要再起一个进程。
 	if snap := a.nodes.Snapshot(); snap.Service != "" {

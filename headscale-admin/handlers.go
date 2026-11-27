@@ -62,6 +62,7 @@ type opsData struct {
 	Version    string
 	Cert       string
 	Logs       string
+	LogHint    string // 日志在哪：Linux 是 journalctl 命令，Windows 是日志文件路径
 	ConfigPath string
 	PolicyPath string
 }
@@ -179,7 +180,8 @@ func (a *App) opsPage(w http.ResponseWriter, r *http.Request) {
 		Service:    nodeSnap.Service,
 		Version:    a.hs.Version(),
 		Cert:       a.hs.CertExpiry(),
-		Logs:       journal(80),
+		Logs:       serviceLog(80),
+		LogHint:    svcLogHint(hsServiceName, 80),
 		ConfigPath: a.hs.Config,
 		PolicyPath: a.hs.PolicyPath(lang),
 	}
@@ -816,7 +818,7 @@ func (a *App) restartHeadscale(w http.ResponseWriter, r *http.Request) {
 	if !a.mutate(w, r) {
 		return
 	}
-	out, err := systemctl("restart", "headscale")
+	out, err := svcRestart(hsServiceName)
 	// 立即刷新一次，避免页面沿用重启前的服务状态与节点快照。
 	a.nodes.sample()
 	if err != nil {
@@ -957,6 +959,7 @@ func (a *App) loadSettingsPage(lang string, liveTLS bool) *ConfigPage {
 	p := a.hs.loadConfigPage(lang)
 	p.AdminTLS = loadAdminTLS(a.dataFile)
 	p.AdminHTTPSLive = liveTLS
+	p.AdminTLSFile = adminTLSPath(a.dataFile)
 	if p.AdminTLS.Enabled {
 		p.AdminTLSCert = describeCertFile(p.AdminTLS.CertPath, lang)
 	}
@@ -1115,7 +1118,7 @@ func (a *App) settingsTLS(w http.ResponseWriter, r *http.Request) {
 		p.LEHostname, p.CertPath, p.KeyPath = "", "", ""
 	}
 	if p.LECacheDir == "" {
-		p.LECacheDir = "/var/lib/headscale/cache"
+		p.LECacheDir = defaultLECacheDir()
 	}
 
 	if errs := validateTLS(p, lang); len(errs) > 0 {

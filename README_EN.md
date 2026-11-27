@@ -4,7 +4,7 @@
   <img src="docs/badges/license.svg" alt="License: MIT">
   <img src="docs/badges/headscale.svg" alt="Headscale v0.29.7">
   <img src="docs/badges/go.svg" alt="Go 1.26">
-  <img src="docs/badges/platform.svg" alt="Platform: Linux">
+  <img src="docs/badges/platform.svg" alt="Platform: Linux and Windows Server">
   <img src="docs/badges/arch.svg" alt="x86_64 and aarch64">
   <img src="docs/badges/shell.svg" alt="Shell: Bash">
   <img src="docs/badges/sqlite.svg" alt="Pure Go SQLite">
@@ -39,6 +39,7 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. admin UI
 
 > Targets Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora, on x86_64 and aarch64.
 > Verified on WSL Ubuntu and AlmaLinux 9. The scripts currently follow the Headscale v0.29.7 configuration format.
+> The admin UI additionally runs natively on Windows Server — see "Windows Server deployment".
 
 ## Features
 
@@ -86,6 +87,7 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. admin UI
 | --- | --- |
 | `deploy-headscale.sh` | One-click Headscale deployment |
 | `deploy-headscale-admin.sh` | One-click deployment of the admin UI (port 3001 by default) |
+| `deploy-headscale-admin.ps1` | One-click deployment of the admin UI on Windows Server (port 3001 by default) |
 | `headscale-admin/` | Go source, templates, and static assets of the admin UI |
 | `node-speed-agent.sh` | Node-side collector that reports local Tailscale traffic counters to the admin UI |
 | `test-headscale-cli.sh` | Read-only sandbox checks for the Headscale CLI and config keys |
@@ -182,6 +184,91 @@ scp -r headscale-admin/templates headscale-admin/static server:~/
 # on the server (no Go, no compilation)
 sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 ```
+
+## Windows Server deployment
+
+> This section ships with the `feature/windows` branch.
+
+The admin UI (Headscale Admin) runs **natively on Windows Server**, with the same feature set as on Linux: captcha, bilingual UI, themes, node/user/key management, config validation and ops monitoring all work the same way.
+
+The control server (headscale) also runs on Windows, but **upstream publishes no official Windows binary** (the v0.29.x release assets cover linux/darwin only), so you build it from source once.
+
+### What differs between the two platforms
+
+| Capability | Linux | Windows Server | Notes |
+| --- | --- | --- | --- |
+| Admin UI (single Go binary) | ✅ | ✅ | Same feature set |
+| headscale control server | ✅ official binary | ⚠️ build it yourself | No Windows release package upstream |
+| Service supervision | systemd | Scheduled task | headscale is an upstream binary and never registers an SCM control handler, so `sc.exe` always fails with 1053 |
+| Service logs | `journalctl -u headscale` | `C:\ProgramData\headscale\logs\headscale.log` | Windows services don't write stdout; the deploy script redirects it to a file |
+| Automatic certificate renewal | certbot + systemd timer | ❌ replace manually | No certbot and no timer on Windows; the UI says so explicitly |
+| Host / NIC monitoring | `/proc` | `GetSystemTimes` / `GetIfTable2Ex` | CPU, memory and NIC counters on the ops page are real numbers |
+
+### Preparing headscale.exe
+
+headscale is a pure Go program, so building it is straightforward:
+
+```bash
+git clone --depth 1 --branch v0.29.7 https://github.com/juanfont/headscale.git
+cd headscale
+go build -o headscale.exe ./cmd/headscale
+```
+
+> Go 1.22+ is required. The first build downloads dependencies; set `GOPROXY=https://goproxy.cn` on networks where that helps.
+
+### Deployment
+
+Run this from an **administrator** PowerShell:
+
+```powershell
+# admin UI + headscale server
+.\deploy-headscale-admin.ps1 -HeadscaleBinary C:\src\headscale.exe `
+    -ServerUrl http://192.168.1.10:8080 -BaseDomain hs.example.com
+
+# admin UI only (add headscale later)
+.\deploy-headscale-admin.ps1 -SkipHeadscale
+
+# offline: build the binary elsewhere and copy it over
+.\deploy-headscale-admin.ps1 -Binary .\headscale-admin.exe -SkipHeadscale
+```
+
+The script does the same things as the Linux one: build and install → initialise the admin account → register the scheduled task → firewall → health check. Config changes are gated by `configtest`; a failed validation aborts the deployment instead of starting a broken service.
+
+### Main parameters
+
+| Parameter | Description |
+| --- | --- |
+| `-Port` | Admin UI listen port, `3001` by default |
+| `-AdminUser` / `-AdminPass` | Initial admin account; without `-AdminPass` the script prompts |
+| `-ResetAdmin` | Reset the admin password |
+| `-AllowCidr` | Only allow the given subnet to reach the admin UI |
+| `-NoFirewall` | Leave the firewall alone |
+| `-Binary` | Use a local `headscale-admin.exe` and skip the build |
+| `-HeadscaleBinary` | A local `headscale.exe` |
+| `-HeadscaleConfig` | Use an existing headscale config instead of generating one |
+| `-SkipHeadscale` | Install the admin UI only |
+| `-ServerUrl` / `-BaseDomain` / `-PrefixV4` | Used when generating the headscale config |
+
+### Layout and day-to-day operations
+
+| Item | Location |
+| --- | --- |
+| Admin UI program | `C:\Program Files\headscale-admin` |
+| Admin UI data | `C:\ProgramData\headscale-admin` (SQLite, sessions, HTTPS config) |
+| headscale program | `C:\Program Files\headscale` |
+| headscale config and data | `C:\ProgramData\headscale` (config.yaml, db.sqlite, noise_private.key) |
+| headscale logs | `C:\ProgramData\headscale\logs\headscale.log` |
+
+```powershell
+schtasks /Run  /TN headscale-admin                    # start
+schtasks /End  /TN headscale-admin                    # stop
+schtasks /Query /TN headscale-admin /V /FO LIST       # status
+```
+
+### Two Windows gotchas
+
+1. **Config paths come in two flavours.** headscale resolves `noise.private_key_path`, `database.sqlite.path`, `tls_letsencrypt_cache_dir` and `policy.path` relative to the directory of the config file — writing `C:\ProgramData\headscale\xxx` gets it turned into `C:\ProgramData\headscale\C:\ProgramData\headscale\xxx` and the service refuses to start. Either use relative paths (`noise_private.key`) or let the deploy script generate the config.
+2. **A scheduled task action may carry only one quoted path.** `cmd.exe /c` has a quote-stripping rule: a second quoted path in the arguments (such as the log redirection) mangles the whole command line, cmd.exe exits with `0x80070001` immediately and not even the log file gets created. The deploy script therefore keeps the redirection inside `run.cmd` and uses the double-quote trick so the task argument holds a single path.
 
 ## The admin UI
 

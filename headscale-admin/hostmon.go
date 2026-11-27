@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"math"
-	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -35,8 +34,11 @@ type HostSnapshot struct {
 	Updated    string      `json:"updated"`
 }
 
-// HostMonitor 每 3 秒读取一次 /proc/stat、/proc/meminfo、/proc/loadavg，
-// 用两次采样的差值算出 CPU 使用率，并保留最近 3 分钟的曲线。
+// HostMonitor 每 3 秒采集一次主机资源，用两次采样的差值算出 CPU 使用率，
+// 并保留最近 3 分钟的曲线。
+//
+// 数据来源按平台拆开：Linux 读 /proc（hostmon_linux.go），
+// Windows 读 Win32 API（hostmon_windows.go）；本文件只管结构与采样循环。
 type HostMonitor struct {
 	mu        sync.RWMutex
 	prevTotal uint64
@@ -64,25 +66,19 @@ func (m *HostMonitor) sample() {
 	now := time.Now()
 	snap := HostSnapshot{CPUCount: runtime.NumCPU(), Updated: now.Format("15:04:05")}
 
-	statRaw, err := os.ReadFile("/proc/stat")
+	total, idle, err := readCPU()
 	if err != nil {
 		m.storeUnavailable(snap, err)
-		return
-	}
-	total, idle, ok := parseProcStat(string(statRaw))
-	if !ok {
-		m.storeUnavailable(snap, fmt.Errorf("/proc/stat has no cpu line"))
 		return
 	}
 
-	memRaw, err := os.ReadFile("/proc/meminfo")
+	memTotal, memAvail, err := readMemory()
 	if err != nil {
 		m.storeUnavailable(snap, err)
 		return
 	}
-	memTotal, memAvail, ok := parseMeminfo(string(memRaw))
-	if !ok || memTotal == 0 {
-		m.storeUnavailable(snap, fmt.Errorf("/proc/meminfo is incomplete"))
+	if memTotal == 0 {
+		m.storeUnavailable(snap, fmt.Errorf("内存总量为 0"))
 		return
 	}
 
@@ -215,37 +211,6 @@ func parseMeminfo(s string) (total, available uint64, ok bool) {
 	}
 	available = vals["MemFree"] + vals["Buffers"] + vals["Cached"]
 	return total, available, true
-}
-
-func readLoadAvg() (float64, float64, float64) {
-	b, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		return 0, 0, 0
-	}
-	fields := strings.Fields(string(b))
-	if len(fields) < 3 {
-		return 0, 0, 0
-	}
-	a, _ := strconv.ParseFloat(fields[0], 64)
-	c, _ := strconv.ParseFloat(fields[1], 64)
-	d, _ := strconv.ParseFloat(fields[2], 64)
-	return a, c, d
-}
-
-func readUptime() uint64 {
-	b, err := os.ReadFile("/proc/uptime")
-	if err != nil {
-		return 0
-	}
-	fields := strings.Fields(string(b))
-	if len(fields) == 0 {
-		return 0
-	}
-	f, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil || f < 0 {
-		return 0
-	}
-	return uint64(f)
 }
 
 // cpuPercent 用两次采样的累计值算使用率；首次采样没有基线时返回 0。
