@@ -1,15 +1,15 @@
 # headscale-onekey
 
 <p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-2ea44f.png?style=flat-square" alt="License: MIT">
-  <img src="https://img.shields.io/badge/Headscale-v0.29.7-4B5563.png?style=flat-square" alt="Headscale v0.29.7">
-  <img src="https://img.shields.io/badge/Go-1.26-00ADD8.png?style=flat-square&logo=go&logoColor=white" alt="Go 1.26">
-  <img src="https://img.shields.io/badge/Platform-Linux-FCC624.png?style=flat-square&logo=linux&logoColor=black" alt="Platform: Linux">
-  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280.png?style=flat-square" alt="x86_64 and aarch64">
-  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25.png?style=flat-square&logo=gnubash&logoColor=white" alt="Shell: Bash">
-  <img src="https://img.shields.io/badge/SQLite-pure%20Go-6B7280.png?style=flat-square" alt="Pure Go SQLite">
-  <img src="https://img.shields.io/badge/dependencies-none-6B7280.png?style=flat-square" alt="No external dependencies">
-  <img src="https://img.shields.io/badge/i18n-简体中文%20%7C%20English-8B5CF6.png?style=flat-square" alt="i18n">
+  <img src="docs/badges/license.svg" alt="License: MIT">
+  <img src="docs/badges/headscale.svg" alt="Headscale v0.29.7">
+  <img src="docs/badges/go.svg" alt="Go 1.26">
+  <img src="docs/badges/platform.svg" alt="Platform: Linux">
+  <img src="docs/badges/arch.svg" alt="x86_64 and aarch64">
+  <img src="docs/badges/shell.svg" alt="Shell: Bash">
+  <img src="docs/badges/sqlite.svg" alt="Pure Go SQLite">
+  <img src="docs/badges/dependencies.svg" alt="No external dependencies">
+  <img src="docs/badges/i18n.svg" alt="i18n">
 </p>
 
 <p align="center">
