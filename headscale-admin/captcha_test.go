@@ -101,20 +101,32 @@ func TestCaptchaPNGDecodes(t *testing.T) {
 	if img.Bounds().Dx() != captchaWidth || img.Bounds().Dy() != captchaHeight {
 		t.Fatalf("图片尺寸 = %dx%d，期望 %dx%d", img.Bounds().Dx(), img.Bounds().Dy(), captchaWidth, captchaHeight)
 	}
-	// 画面上得有明显比背景深的墨迹，不然就是一张空白图。
-	// 判据按「比背景深且各通道都够暗」来定：噪点是中性灰（R=G=B），
-	// 调色板里的深蓝、深紫也够暗——所以三个通道一起看才不会误判。
+	// 画面上得有真正画上去的数字，不然就是一张空白图。
+	//
+	// 判据：统计「颜色落在调色板里的像素」。调色板是画数字专用的固定几种深色，
+	// 噪点（中性灰）和干扰线（随机 RGB）都不会命中它，
+	// 所以这个计数只反映数字本身画了多少，与抽到哪种颜色无关。
+	//
+	// 早先这里用的是「三个通道都得够暗」的启发式判据，而调色板里的深紫
+	// {0x7a,0x1f,0x5c} 和深红 {0x8a,0x2b,0x1f} 红通道本来就偏高——
+	// 四个数字若恰好都抽到这两种颜色就会被误判成空白图。
+	// 那是随机抽色带来的偶发失败，跟操作系统无关，Linux 上同样会翻车。
 	ink := 0
 	b := img.Bounds()
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
 			r, g, bb, _ := img.At(x, y).RGBA()
-			if r>>8 < 100 && g>>8 < 100 && bb>>8 < 170 {
-				ink++
+			cr, cg, cb := uint8(r>>8), uint8(g>>8), uint8(bb>>8)
+			for _, p := range captchaPalette {
+				if cr == p.R && cg == p.G && cb == p.B {
+					ink++
+					break
+				}
 			}
 		}
 	}
-	if ink < 500 {
+	// 「1234」四个数字共 52 个点阵点，每个放大成 6x6=36 像素，满打满算 1872 个。
+	if ink < 1200 {
 		t.Fatalf("图上的墨迹像素只有 %d 个，数字可能没画出来", ink)
 	}
 }

@@ -137,7 +137,7 @@
 </section>
 
 <section class="card">
-  <div class="card-head"><h2 class="card-title">{{icon "terminal" 18}} {{t .Lang "section.logs"}}</h2><span class="badge muted small">journalctl -u headscale -n 80</span></div>
+  <div class="card-head"><h2 class="card-title">{{icon "terminal" 18}} {{t .Lang "section.logs"}}</h2><span class="badge muted small">{{.Data.LogHint}}</span></div>
   <pre class="logs">{{.Data.Logs}}</pre>
 </section>
 {{template "foot" .}}{{end}}

@@ -53,6 +53,7 @@ type ConfigPage struct {
 	AdminTLS       adminTLSConfig
 	AdminTLSCert   string // 当前证书描述（CN + 到期时间）
 	AdminHTTPSLive bool   // 当前进程是否正以 HTTPS 运行
+	AdminTLSFile   string // admin-tls.json 的实际路径（锁死时的恢复办法要用）
 
 	// 节点网速上报通道（POST /api/speed）：地址、令牌与启用状态
 	SpeedEndpoint string
@@ -86,6 +87,7 @@ type CertInfo struct {
 type RenewInfo struct {
 	Mode             string // acme | certbot | manual | none
 	CertbotInstalled bool
+	CertbotSupported bool // 本平台是否支持 certbot 自动续期（Windows 上没有）
 	TimerEnabled     string
 	TimerActive      string
 	NextRun          string
@@ -96,8 +98,8 @@ type RenewInfo struct {
 }
 
 func (c *HSClient) loadConfigPage(lang string) *ConfigPage {
-	p := &ConfigPage{Errors: map[string]string{}, Service: tr(lang, "state.unknown"), ConfigPath: c.Config, LECacheDir: "/var/lib/headscale/cache", ChallengeType: "HTTP-01", LEListen: ":http"}
-	if out, err := systemctl("is-active", "headscale"); err == nil {
+	p := &ConfigPage{Errors: map[string]string{}, Service: tr(lang, "state.unknown"), ConfigPath: c.Config, LECacheDir: defaultLECacheDir(), ChallengeType: "HTTP-01", LEListen: ":http"}
+	if out, err := svcIsActive(hsServiceName); err == nil {
 		p.Service = strings.TrimSpace(out)
 	}
 	content, err := c.ReadConfigText()
@@ -174,7 +176,7 @@ func certCandidatePaths(p *ConfigPage) (cert, key, source string) {
 	if p.LEHostname != "" {
 		dir := p.LECacheDir
 		if dir == "" {
-			dir = "/var/lib/headscale/cache"
+			dir = defaultLECacheDir()
 		}
 		c := firstExisting(filepath.Join(dir, p.LEHostname+".crt"), filepath.Join(dir, p.LEHostname+".pem"))
 		if c == "" {
@@ -255,33 +257,8 @@ func certProblemText(code, lang string) string {
 	return code
 }
 
-func certbotBinary() string {
-	for _, p := range []string{"/usr/bin/certbot", "/usr/local/bin/certbot", "/snap/bin/certbot"} {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
-func systemdShow(unit string, props ...string) map[string]string {
-	out := map[string]string{}
-	args := append([]string{"show", unit, "-p", strings.Join(props, ",")}, "--no-pager")
-	b, err := execCombined(context.Background(), hsLocalTimeout, "systemctl", args...)
-	if err != nil {
-		return out
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		k, v, ok := strings.Cut(line, "=")
-		if ok {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 func inspectRenew(p *ConfigPage) RenewInfo {
-	r := RenewInfo{Mode: "none", CertbotInstalled: certbotBinary() != "", Schedule: "03:17"}
+	r := RenewInfo{Mode: "none", CertbotInstalled: certbotPath() != "", CertbotSupported: certbotSupported(), Schedule: "03:17"}
 	if p.TLSMode == "letsencrypt" {
 		r.Mode = "acme"
 		r.Note = "acme"
@@ -314,11 +291,11 @@ func inspectRenew(p *ConfigPage) RenewInfo {
 		}
 	}
 	if r.CertName == "" {
-		if m, _ := filepath.Glob("/etc/letsencrypt/live/*"); len(m) > 0 {
+		if m, _ := filepath.Glob(letsEncryptLiveGlob()); len(m) > 0 {
 			r.CertName = filepath.Base(m[0])
 		}
 	}
-	if ov := "/etc/systemd/system/certbot.timer.d/override.conf"; fileExists(ov) {
+	if ov := filepath.Join(certbotTimerDir(), "override.conf"); certbotTimerDir() != "" && fileExists(ov) {
 		if b, err := os.ReadFile(ov); err == nil {
 			if m := regexp.MustCompile(`OnCalendar=\*-\*-\*\s+(\d{2}:\d{2})`).FindStringSubmatch(string(b)); len(m) > 1 {
 				r.Schedule = m[1]
@@ -540,7 +517,7 @@ func validateTLS(p *ConfigPage, lang string) map[string]string {
 
 // manualCertDir 是手动证书的固定落盘位置，headscale 进程要能读到。
 // 声明成变量是为了让测试能指向临时目录；生产上始终是下面这个路径。
-var manualCertDir = "/etc/headscale/certs"
+var manualCertDir = defaultHeadscaleCertDir()
 
 // checkCertPair 校验证书链与私钥，返回出错字段与 i18n 键；通过时两者都为空。
 func checkCertPair(certPEM, keyPEM string) (field, code string) {
@@ -746,7 +723,7 @@ func writeCertFiles(files map[string]string) (func(), error) {
 		}
 	}
 	// headscale 以 headscale 用户运行，证书必须让它可读（失败时保留 root 属主，仅影响排查提示）。
-	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "-R", "headscale:headscale", manualCertDir)
+	chownRecursive(manualCertDir)
 	return restore, nil
 }
 
@@ -977,10 +954,10 @@ func (c *HSClient) ApplyConfig(next string, restart bool, lang string) (string, 
 	ctOut := strings.TrimSpace(safeText(ansiRE.ReplaceAllString(out, "")))
 	if err != nil {
 		// configtest 会真实初始化，可能留下 root 属主的运行文件。
-		_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "-R", "headscale:headscale", "/var/lib/headscale")
+		chownRecursive(defaultHeadscaleDataDir())
 		return "", errors.New(tr(lang, "cfg.err.configtest", ctOut))
 	}
-	_, _ = execCombined(context.Background(), hsWriteTimeout, "chown", "-R", "headscale:headscale", "/var/lib/headscale")
+	chownRecursive(defaultHeadscaleDataDir())
 
 	old, err := os.ReadFile(c.Config)
 	if err != nil {
@@ -1011,7 +988,7 @@ func (c *HSClient) ApplyConfig(next string, restart bool, lang string) (string, 
 func probeTarget() string {
 	conf := os.Getenv("HSA_CONFIG_FILE")
 	if conf == "" {
-		conf = "/etc/headscale/config.yaml"
+		conf = defaultHeadscaleConfig()
 	}
 	b, err := os.ReadFile(conf)
 	if err != nil {
@@ -1033,7 +1010,7 @@ func waitListening(addr string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		active := false
-		if out, err := systemctl("is-active", "headscale"); err == nil && strings.TrimSpace(out) == "active" {
+		if out, err := svcIsActive(hsServiceName); err == nil && strings.TrimSpace(out) == "active" {
 			active = true
 		}
 		if active {
@@ -1052,19 +1029,19 @@ func waitListening(addr string, timeout time.Duration) bool {
 }
 
 func restartHeadscale() (string, bool) {
-	if out, err := systemctl("restart", "headscale"); err != nil {
+	if out, err := svcRestart(hsServiceName); err != nil {
 		return strings.TrimSpace(out + " " + err.Error()), false
 	}
 	if waitListening(probeTarget(), 30*time.Second) {
 		return "", true
 	}
-	out, _ := systemctl("status", "headscale", "--no-pager", "-n", "12")
+	out, _ := svcStatus(hsServiceName, 12)
 	return strings.TrimSpace(out), false
 }
 
 // certRenew 触发 certbot 续期，成功后续期并重启 headscale 让新证书生效。
 func certRenew(lang string) (string, error) {
-	bin := certbotBinary()
+	bin := certbotPath()
 	if bin == "" {
 		return "", errors.New(tr(lang, "cfg.err.noCertbot"))
 	}
@@ -1080,15 +1057,18 @@ func certRenew(lang string) (string, error) {
 }
 
 // setRenewTimer 启停 certbot.timer，并可选写入每日检查时间。
+//
+// 整块能力只在 Linux 上存在：Windows 没有 certbot，也没有 systemd timer。
+// certbotPath() 在 Windows 上返回空串，这里会先一步返回「未安装 certbot」。
 func setRenewTimer(enable bool, schedule string, lang string) error {
-	if certbotBinary() == "" {
+	if certbotPath() == "" {
 		return errors.New(tr(lang, "cfg.err.noCertbot"))
 	}
 	if enable && schedule != "" {
 		if !regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`).MatchString(schedule) {
 			return errors.New(tr(lang, "cfg.err.schedule"))
 		}
-		dir := "/etc/systemd/system/certbot.timer.d"
+		dir := certbotTimerDir()
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
@@ -1096,15 +1076,11 @@ func setRenewTimer(enable bool, schedule string, lang string) error {
 		if err := os.WriteFile(filepath.Join(dir, "override.conf"), []byte(conf), 0644); err != nil {
 			return err
 		}
-		if _, err := systemctl("daemon-reload"); err != nil {
+		if err := svcDaemonReload(); err != nil {
 			return err
 		}
 	}
-	action := "disable"
-	if enable {
-		action = "enable"
-	}
-	if out, err := systemctl(action, "--now", "certbot.timer"); err != nil {
+	if out, err := certbotTimerSet(enable); err != nil {
 		return errors.New(strings.TrimSpace(out + " " + err.Error()))
 	}
 	return nil

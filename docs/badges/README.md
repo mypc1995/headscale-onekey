@@ -20,7 +20,7 @@ cd docs/badges
 curl -fsSL -o license.svg 'https://img.shields.io/badge/License-MIT-2ea44f.svg?style=flat-square'
 curl -fsSL -o headscale.svg 'https://img.shields.io/badge/Headscale-v0.29.7-4B5563.svg?style=flat-square'
 curl -fsSL -o go.svg 'https://img.shields.io/badge/Go-1.26-00ADD8.svg?style=flat-square&logo=go&logoColor=white'
-curl -fsSL -o platform.svg 'https://img.shields.io/badge/Platform-Linux-FCC624.svg?style=flat-square&logo=linux&logoColor=black'
+curl -fsSL -o platform.svg 'https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20Server-FCC624.svg?style=flat-square'
 curl -fsSL -o arch.svg 'https://img.shields.io/badge/Arch-x86__64%20%7C%20aarch64-6B7280.svg?style=flat-square'
 curl -fsSL -o shell.svg 'https://img.shields.io/badge/Shell-Bash-4EAA25.svg?style=flat-square&logo=gnubash&logoColor=white'
 curl -fsSL -o sqlite.svg 'https://img.shields.io/badge/SQLite-pure%20Go-6B7280.svg?style=flat-square'

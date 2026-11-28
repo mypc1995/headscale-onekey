@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,14 +130,13 @@ func (m *NodeMonitor) sample() {
 		Nodes:     []NodeStat{},
 		Updated:   now.Format("15:04:05"),
 	}
-	if runtime.GOOS == "linux" {
-		if out, err := systemctl("is-active", "headscale"); err == nil || strings.TrimSpace(out) != "" {
-			if v := strings.TrimSpace(out); v != "" {
-				snap.Service = v
-			}
+	// 服务状态按平台去问：Linux 问 systemd，Windows 查进程/计划任务。
+	if out, err := svcIsActive(hsServiceName); err == nil || strings.TrimSpace(out) != "" {
+		if v := strings.TrimSpace(out); v != "" {
+			snap.Service = v
 		}
-		snap.ServiceOK = snap.Service == "active"
 	}
+	snap.ServiceOK = snap.Service == "active"
 
 	raw, err := m.hs.Nodes()
 	if err != nil {

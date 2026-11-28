@@ -4,7 +4,7 @@
   <img src="docs/badges/license.svg" alt="License: MIT">
   <img src="docs/badges/headscale.svg" alt="Headscale v0.29.7">
   <img src="docs/badges/go.svg" alt="Go 1.26">
-  <img src="docs/badges/platform.svg" alt="Platform: Linux">
+  <img src="docs/badges/platform.svg" alt="Platform: Linux and Windows Server">
   <img src="docs/badges/arch.svg" alt="x86_64 and aarch64">
   <img src="docs/badges/shell.svg" alt="Shell: Bash">
   <img src="docs/badges/sqlite.svg" alt="Pure Go SQLite">
@@ -37,7 +37,7 @@ sudo bash deploy-headscale.sh -u http://192.168.1.10:18080   # 1. 控制服务�
 sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 ```
 
-> 支持 Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora，x86_64 与 aarch64。
+> 支持 Ubuntu / Debian / CentOS / RHEL / Rocky / AlmaLinux / Fedora，x86_64 与 aarch64；管理界面另有 Windows Server 版本（见「Windows Server 部署」）。
 > 已在 WSL Ubuntu 与 AlmaLinux 9 实机验证；脚本按 Headscale v0.29.7 的配置格式编写。
 
 ## 特性
@@ -86,6 +86,7 @@ sudo bash deploy-headscale-admin.sh --port 3001             # 2. 管理界面
 | --- | --- |
 | `deploy-headscale.sh` | Headscale 一键部署 |
 | `deploy-headscale-admin.sh` | 管理界面一键部署（默认端口 3001） |
+| `deploy-headscale-admin.ps1` | 管理界面一键部署（Windows Server 版，默认端口 3001） |
 | `headscale-admin/` | 管理界面 Go 源码、模板与静态资源 |
 | `node-speed-agent.sh` | 节点侧网速采集代理，把本机 Tailscale 流量计数上报到管理界面 |
 | `test-headscale-cli.sh` | Headscale CLI / 配置键只读沙盒验证 |
@@ -182,6 +183,91 @@ scp -r headscale-admin/templates headscale-admin/static 服务器:~/
 # 在服务器上（不装 Go、不编译）
 sudo bash deploy-headscale-admin.sh --binary ~/headscale-admin
 ```
+
+## Windows Server 部署
+
+> 本节随 `feature/windows` 分支提供。
+
+管理界面（Headscale Admin）可以**原生跑在 Windows Server 上**，功能与 Linux 版一致：验证码、双语、主题、节点/用户/密钥管理、配置校验、运维监控一应俱全。
+
+控制服务器（headscale）在 Windows 上也能跑，但**上游不发布官方 Windows 二进制**（v0.29.x 的发布包里只有 linux/darwin），需要自己从源码编译一次。
+
+### 两边的能力差异
+
+| 能力 | Linux | Windows Server | 说明 |
+| --- | --- | --- | --- |
+| 管理界面（Go 单二进制） | ✅ | ✅ | 功能一致 |
+| headscale 控制服务器 | ✅ 官方二进制 | ⚠️ 需自行编译 | 上游没有 Windows 发布包 |
+| 服务托管 | systemd | 计划任务 | headscale 是上游二进制，不会注册 SCM 控制处理器，`sc.exe` 注册必然报 1053 |
+| 服务日志 | `journalctl -u headscale` | `C:\ProgramData\headscale\logs\headscale.log` | Windows 服务不写 stdout，部署脚本重定向到文件 |
+| 证书自动续期 | certbot + systemd timer | ❌ 手工更换 | 没有 certbot 也没有 timer，界面会明确提示 |
+| 主机 / 网卡监控 | `/proc` | `GetSystemTimes` / `GetIfTable2Ex` | 运维页的 CPU、内存、网卡流量都有真实数据 |
+
+### 准备 headscale.exe
+
+headscale 是纯 Go 程序，直接编译即可：
+
+```bash
+git clone --depth 1 --branch v0.29.7 https://github.com/juanfont/headscale.git
+cd headscale
+go build -o headscale.exe ./cmd/headscale
+```
+
+> 需要 Go 1.22+。首次编译要拉依赖，国内机器可设 `GOPROXY=https://goproxy.cn`。
+
+### 部署
+
+在**管理员** PowerShell 里执行：
+
+```powershell
+# 管理界面 + headscale 服务端
+.\deploy-headscale-admin.ps1 -HeadscaleBinary C:\src\headscale.exe `
+    -ServerUrl http://192.168.1.10:8080 -BaseDomain hs.example.com
+
+# 只装管理界面（headscale 之后补）
+.\deploy-headscale-admin.ps1 -SkipHeadscale
+
+# 离线：在别处编译好二进制再拷过来
+.\deploy-headscale-admin.ps1 -Binary .\headscale-admin.exe -SkipHeadscale
+```
+
+脚本做的事与 Linux 版一一对应：编译安装 → 初始化管理员 → 注册计划任务 → 防火墙 → 健康检查；改配置前跑 `configtest` 校验，校验不过直接终止、不带病启动。
+
+### 主要参数
+
+| 参数 | 说明 |
+| --- | --- |
+| `-Port` | 管理界面监听端口，默认 `3001` |
+| `-AdminUser` / `-AdminPass` | 初始管理员；不给 `-AdminPass` 则交互输入 |
+| `-ResetAdmin` | 重置管理员密码 |
+| `-AllowCidr` | 只放行指定网段访问管理界面 |
+| `-NoFirewall` | 不修改防火墙 |
+| `-Binary` | 用本地已有的 `headscale-admin.exe`，跳过编译 |
+| `-HeadscaleBinary` | 本地已有的 `headscale.exe` |
+| `-HeadscaleConfig` | 用已有的 headscale 配置，不生成新的 |
+| `-SkipHeadscale` | 只装管理界面，不碰 headscale 服务端 |
+| `-ServerUrl` / `-BaseDomain` / `-PrefixV4` | 生成 headscale 配置时用 |
+
+### 落点与运维
+
+| 内容 | 位置 |
+| --- | --- |
+| 管理界面程序 | `C:\Program Files\headscale-admin` |
+| 管理界面数据 | `C:\ProgramData\headscale-admin`（SQLite、会话、HTTPS 配置） |
+| headscale 程序 | `C:\Program Files\headscale` |
+| headscale 配置与数据 | `C:\ProgramData\headscale`（config.yaml、db.sqlite、noise_private.key） |
+| headscale 日志 | `C:\ProgramData\headscale\logs\headscale.log` |
+
+```powershell
+schtasks /Run  /TN headscale-admin                    # 启动
+schtasks /End  /TN headscale-admin                    # 停止
+schtasks /Query /TN headscale-admin /V /FO LIST       # 状态
+```
+
+### Windows 上的两个坑
+
+1. **配置里的路径分两类，不能混。** headscale 会把 `noise.private_key_path`、`database.sqlite.path`、`tls_letsencrypt_cache_dir`、`policy.path` 按「相对配置文件所在目录」解析——写 `C:\ProgramData\headscale\xxx` 会被拼成 `C:\ProgramData\headscale\C:\ProgramData\headscale\xxx` 而直接报错。要么写相对路径（`noise_private.key`），要么用部署脚本生成。
+2. **计划任务的动作参数里只能有一个带引号的路径。** `cmd.exe /c` 有条引号剥离规则：参数里再出现一个带引号的路径（日志重定向）就会把整条命令行拼坏，cmd.exe 以 `0x80070001` 秒退、连日志文件都不会生成。部署脚本因此把重定向放进 `run.cmd` 内部，任务参数用双引号技巧只留一个路径。
 
 ## 管理界面
 
